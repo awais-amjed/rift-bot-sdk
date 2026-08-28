@@ -1,0 +1,12 @@
+{
+  "name": "@rift/bot",
+  "version": "0.1.0",
+  "description": "Write a Rift bot. Auth, commands, replies and panels against a self-hosted server.",
+  "type": "module",
+  "private": true,
+  "exports": "./src/index.ts",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  }
+}
