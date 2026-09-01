@@ -133,6 +133,37 @@ stores fine, verifies as false, and renders as nothing: the bot watches it send
 and nobody ever sees it. That failure is invisible in both codebases and
 obvious in a vector.
 
+## DMs
+
+```ts
+bot.onDirectMessage(async (dm) => {
+  await bot.dms.reply(dm, `You said: ${dm.text}`);
+});
+await bot.listen(async () => {});   // one tick drives both
+```
+
+`example/dm_bot.ts` is the whole thing.
+
+**A DM to a bot is private from the server too**, not just from every member —
+it is sealed exactly like a DM between two people, and the bot is one of the two
+ends. That makes it the only place a bot does real chat crypto: everything it
+writes in a channel is signed but not sealed, because it holds no channel key.
+
+The conversation key is derived, never distributed:
+
+```
+dmKey = HMAC-SHA256(X25519(myChatPrivate, theirChatPublic), "dm:v1")
+```
+
+Both ends compute the same bytes from opposite halves, so nothing is stored and
+nothing is sent — the only thing published is a public key, which `listen` does
+for you.
+
+Incoming DMs are **opened and signature-checked before they reach your
+handler**, and a row that fails either is dropped rather than passed on. A bot
+acting on a message that is not from who it claims is the whole attack, and it
+is not a decision worth leaving to each bot author.
+
 ## Voice
 
 ```ts
@@ -211,5 +242,5 @@ which is what keeps "a URL" an `ffmpeg` flag rather than a dependency tree.
   inaudible: leave and `joinVoice` again, which fetches the new key.
 - **Joining from an invite link.** `resolve_invite` and `register` are still
   done by hand; this package starts from a server id and a seed.
-- **Attachments.** A bot's reply is text or a panel.
-- **DMs.** A bot can be DM'd, and this SDK does not read them yet.
+- **Attachments.** A bot's reply is text or a panel, in a channel or a DM.
+

@@ -60,13 +60,18 @@ export interface Wrapped {
   nonce: string;
 }
 
-/** Open a key sealed to [identity]. Throws if the tag does not check out. */
-export function unwrapKey(identity: ChatIdentity, wrapped: Wrapped): Buffer {
-  const ephemeral = createPublicKey({
-    key: Buffer.concat([X25519_SPKI, Buffer.from(wrapped.ephemeral_public_key, 'base64')]),
+/** A raw 32-byte X25519 public key, as `node:crypto` will take it. */
+export function x25519PublicFrom(raw: Buffer): KeyObject {
+  return createPublicKey({
+    key: Buffer.concat([X25519_SPKI, raw]),
     format: 'der',
     type: 'spki',
   });
+}
+
+/** Open a key sealed to [identity]. Throws if the tag does not check out. */
+export function unwrapKey(identity: ChatIdentity, wrapped: Wrapped): Buffer {
+  const ephemeral = x25519PublicFrom(Buffer.from(wrapped.ephemeral_public_key, 'base64'));
   const shared = diffieHellman({ privateKey: identity.privateKey, publicKey: ephemeral });
   const wrappingKey = createHmac('sha256', shared).update('wrap:v1', 'utf8').digest();
 

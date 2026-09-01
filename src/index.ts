@@ -2,6 +2,13 @@ export { BotSession, BotError } from './session.ts';
 export { Bot, isAction, command, args, type BotMessage, type PanelBlock } from './bot.ts';
 export { VoiceConnection, joinVoice, type VoiceOptions } from './voice.ts';
 export {
+  DirectMessages,
+  deriveDmKey,
+  decodeBody,
+  encodeBody,
+  type DirectMessage,
+} from './dm.ts';
+export {
   SAMPLE_RATE,
   CHANNELS,
   KEY_RING_SIZE,

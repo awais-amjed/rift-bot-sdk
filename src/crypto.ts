@@ -1,13 +1,22 @@
-import { createHmac, createPrivateKey, createPublicKey, sign as nodeSign, randomBytes, KeyObject } from 'node:crypto';
+import {
+  createHmac,
+  createPrivateKey,
+  createPublicKey,
+  sign as nodeSign,
+  verify as nodeVerify,
+  randomBytes,
+  KeyObject,
+} from 'node:crypto';
 
 /**
  * The key ladder and the signing format, exactly as `WIRE.md` describes them.
  *
  * No dependencies, and that is the point rather than a boast: everything a bot
  * needs is HMAC-SHA256, an Ed25519 keypair from a seed, one signature and
- * base64 — all of which Node has had for years. A bot never holds a channel
- * key, so it never opens anything, so there is no X25519, no AES-GCM and no
- * Argon2id here at all.
+ * base64 — all of which Node has had for years. There is no X25519, no AES-GCM
+ * and no Argon2id *here*: a bot never holds a channel key, and the two things it
+ * does open — its own media key, and its own DMs — live in `sealed.ts` and
+ * `dm.ts`.
  *
  * Every value this file produces is checked against `../test/wire_vectors.json`
  * — the same file the Dart implementation is checked against. That is the only
@@ -68,6 +77,37 @@ export function deriveServerIdentity(
 /** Ed25519 over the UTF-8 bytes, base64 out. Deterministic, so it is testable. */
 export function sign(payload: string, privateKey: KeyObject): string {
   return nodeSign(null, Buffer.from(payload, 'utf8'), privateKey).toString('base64');
+}
+
+/** DER prefix for a raw 32-byte Ed25519 public key. */
+const ED25519_SPKI = Buffer.from('302a300506032b6570032100', 'hex');
+
+/**
+ * Check a signature against a raw 32-byte Ed25519 public key.
+ *
+ * The half a *reader* does. Clients drop what they cannot verify, and a bot
+ * reading its DMs is a reader like any other — a row whose signature does not
+ * check out is not from who it claims, and acting on one is the whole attack.
+ */
+export function verifySignature(
+  payload: string,
+  signatureBase64: string,
+  publicKey: Buffer,
+): boolean {
+  try {
+    return nodeVerify(
+      null,
+      Buffer.from(payload, 'utf8'),
+      createPublicKey({
+        key: Buffer.concat([ED25519_SPKI, publicKey]),
+        format: 'der',
+        type: 'spki',
+      }),
+      Buffer.from(signatureBase64, 'base64'),
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**

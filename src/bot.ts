@@ -1,6 +1,7 @@
 import { signedPayload, sign } from './crypto.ts';
 import { BotError, type BotSession } from './session.ts';
 import { joinVoice, type VoiceConnection, type VoiceOptions } from './voice.ts';
+import { DirectMessages, type DirectMessage } from './dm.ts';
 
 /** One command, or one press, as the bot receives it. */
 export interface BotMessage {
@@ -54,7 +55,14 @@ export class Bot {
   readonly pollMs: number;
 
   #lastSeen = 0;
+  #lastDm = 0;
   #timer: NodeJS.Timeout | null = null;
+
+  /// Direct messages, which are the one thing a bot both opens and seals. See
+  /// [DirectMessages] — they are held apart from channel replies because the
+  /// two have different reach, and mixing up which one an answer went to is the
+  /// mistake worth making impossible.
+  readonly dms: DirectMessages;
 
   /// One tick at a time. `setInterval` does not wait for the previous callback,
   /// so a slow handler — or a slow network — lets two ticks run the same query
@@ -64,9 +72,24 @@ export class Bot {
   /// once and watching a poll go up by two.
   #draining = false;
 
+  #onDirectMessage: ((message: DirectMessage) => void | Promise<void>) | null = null;
+
   constructor(session: BotSession, pollMs = 2000) {
     this.session = session;
     this.pollMs = pollMs;
+    this.dms = new DirectMessages(session);
+  }
+
+  /**
+   * Answer direct messages too.
+   *
+   * Call before {@link listen}. A DM to a bot is private from the *server* as
+   * well as from every member (BOTS.md §3) — it is sealed to the two of you and
+   * nothing else can read it, which is exactly why it is the one place a bot
+   * does real chat crypto rather than writing plaintext.
+   */
+  onDirectMessage(handler: (message: DirectMessage) => void | Promise<void>): void {
+    this.#onDirectMessage = handler;
   }
 
   /**
@@ -88,6 +111,7 @@ export class Bot {
     // never appear in the sealing loop.
     await this.session.publishChatKey();
     this.#lastSeen = await this.#newestId();
+    if (this.#onDirectMessage) this.#lastDm = await this.dms.newestId();
     this.#timer = setInterval(() => void this.#drain(onMessage), this.pollMs);
   }
 
@@ -176,6 +200,16 @@ export class Bot {
           actionValue: (row.action_value as string) ?? undefined,
           panelId: (row.reply_to as number) ?? undefined,
         });
+      }
+
+      // The same tick, not a second timer: one cursor per source, but one
+      // drain, so a slow handler cannot let the two overlap each other.
+      const handler = this.#onDirectMessage;
+      if (handler) {
+        for (const dm of await this.dms.since(this.#lastDm)) {
+          this.#lastDm = dm.id;
+          await handler(dm);
+        }
       }
     } catch (error) {
       if (!(error instanceof BotError)) throw error;

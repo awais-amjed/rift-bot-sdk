@@ -10,7 +10,9 @@ import {
   sign,
   signedPayload,
   toBase58,
+  verifySignature,
 } from '../src/crypto.ts';
+import { decodeBody, deriveDmKey, encodeBody } from '../src/dm.ts';
 import { deriveChatIdentity, unwrapKey } from '../src/sealed.ts';
 
 /**
@@ -152,4 +154,53 @@ test('the key a bot speaks with is a one-way function of the channel key', () =>
     .digest();
   assert.equal(derived.toString('base64'), vectors.bot_voice_key.key_base64);
   assert.notEqual(derived.toString('base64'), vectors.wrapped_key.key_base64);
+});
+
+/// `dm:v1` — the key a bot shares with one person and nobody else.
+///
+/// Derived rather than distributed: both ends compute it from opposite halves
+/// of an X25519 exchange, so there is nothing for the server to hold and
+/// nothing to go wrong in delivery. Which also means the two implementations
+/// have to agree exactly, with no round trip to notice a disagreement on.
+
+test('a bot derives the same DM key the app does', () => {
+  const identity = deriveChatIdentity(seed, vectors.chat_identity.host);
+  const key = deriveDmKey(identity, vectors.dm_key.peer_chat_public_key);
+  assert.equal(key.toString('base64'), vectors.dm_key.key_base64);
+});
+
+test('a DM key is not the chat identity it came from', () => {
+  const identity = deriveChatIdentity(seed, vectors.chat_identity.host);
+  const key = deriveDmKey(identity, vectors.dm_key.peer_chat_public_key);
+  assert.notEqual(key.toString('base64'), vectors.chat_identity.public_key_base64);
+});
+
+test('a different peer is a different conversation', () => {
+  // Two people DMing the same bot must not be able to read each other, which
+  // falls out of the exchange rather than being enforced anywhere.
+  const identity = deriveChatIdentity(seed, vectors.chat_identity.host);
+  const other = deriveChatIdentity(Buffer.alloc(32, 9), vectors.chat_identity.host);
+  assert.notEqual(
+    deriveDmKey(identity, vectors.dm_key.peer_chat_public_key).toString('base64'),
+    deriveDmKey(identity, other.publicKey.toString('base64')).toString('base64'),
+  );
+});
+
+test('a body round-trips, and a bare string is its own text', () => {
+  // Anything that is not the tagged object predates the shape, so it has to
+  // come back verbatim rather than throwing.
+  assert.equal(decodeBody(encodeBody('hello')), 'hello');
+  assert.equal(decodeBody('just text'), 'just text');
+  assert.equal(decodeBody('{"not":"ours"}'), '{"not":"ours"}');
+});
+
+test('a signature verifies, and one bit off does not', () => {
+  const identity = deriveServerIdentity(
+    seed,
+    vectors.server_identity.host,
+    vectors.server_identity.server_id,
+  );
+  const payload = vectors.signed_payload.channel;
+  assert.ok(verifySignature(payload, vectors.signature.base64, identity.publicKey));
+  assert.ok(!verifySignature(payload + 'x', vectors.signature.base64, identity.publicKey));
 });
