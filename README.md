@@ -5,14 +5,23 @@ Write a Rift bot in TypeScript.
 ```ts
 import { Bot, BotSession, args, command } from '@rift/bot';
 
-const session = new BotSession(url, anonKey, serverId, seed);
-const bot = new Bot(session);
+// First run: the same invite link an admin would send a person.
+const session = await BotSession.join({ invite, seed, username: 'echo' });
+console.log('save this:', session.config);
 
-await session.login();
+// Every run after: what `config` gave you.
+// const session = new BotSession(url, anonKey, serverId, seed);
+
+const bot = new Bot(session);
 await bot.listen(async (message) => {
   if (command(message) === 'echo') await bot.reply(message, args(message));
 });
 ```
+
+`BotSession.join` claims the invite, derives the identity scoped to that server,
+signs in, and comes back a member — one paste, the same link a person would get.
+An invite is spent, so save `session.config` next to the seed and construct a
+session directly on every later run.
 
 `example/echo_bot.ts` is a complete one in about thirty lines;
 `example/panel_bot.ts` runs a poll on a panel; `example/music_bot.ts` plays into
@@ -123,10 +132,15 @@ npm test
 ```
 
 `test/wire.test.ts` verifies this package against `../test/wire_vectors.json` —
-the same file the Dart implementation is checked against, including reproducing
-one of its signatures byte for byte. Neither codebase reads the other; they meet
-at one JSON file, which is the only arrangement in which "they agree" means
-anything.
+generated from Rift's own crypto (`rift_crypto/`, which is Dart) and checked
+against it by `test/wire_test.dart`. This package reproduces one of its
+signatures byte for byte, derives the same DM key, and opens a blob it sealed.
+Neither codebase reads the other; they meet at one JSON file, which is the only
+arrangement in which "they agree" means anything.
+
+There was a Dart bot SDK too, and it is gone (BOTS.md §11) — it could never
+publish audio, and it fell a feature behind every time this one gained something.
+The second implementation that matters is the app itself, and it is still there.
 
 That matters more than it sounds. A payload that differs by one character
 stores fine, verifies as false, and renders as nothing: the bot watches it send
@@ -240,7 +254,5 @@ which is what keeps "a URL" an `ffmpeg` flag rather than a dependency tree.
   request with a required `track_sid` it never fills in and throws. Until that
   is fixed upstream, a bot that was speaking when a rotation happened goes
   inaudible: leave and `joinVoice` again, which fetches the new key.
-- **Joining from an invite link.** `resolve_invite` and `register` are still
-  done by hand; this package starts from a server id and a seed.
 - **Attachments.** A bot's reply is text or a panel, in a channel or a DM.
 

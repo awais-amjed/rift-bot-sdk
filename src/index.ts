@@ -1,4 +1,5 @@
 export { BotSession, BotError } from './session.ts';
+export { parseInvite, type Invite } from './invite.ts';
 export { Bot, isAction, command, args, type BotMessage, type PanelBlock } from './bot.ts';
 export { VoiceConnection, joinVoice, type VoiceOptions } from './voice.ts';
 export {

@@ -1,5 +1,6 @@
 import { deriveServerIdentity, signSiws, type ServerIdentity } from './crypto.ts';
 import { deriveChatIdentity, type ChatIdentity } from './sealed.ts';
+import { parseInvite } from './invite.ts';
 
 /** Anything the server refused. */
 export class BotError extends Error {}
@@ -31,7 +32,7 @@ export class BotSession {
   // Node runs this file by *stripping* types, and a parameter property is the
   // one piece of TypeScript that has to generate code rather than erase it. The
   // whole package is buildless, and that is worth more than four lines.
-  readonly #anonKey: string;
+  #anonKey: string;
   #token: string | null = null;
   #userId: string | null = null;
 
@@ -55,6 +56,87 @@ export class BotSession {
     return this.patch(`users?id=eq.${this.#userId}`, {
       chat_public_key: this.chatIdentity.publicKey.toString('base64'),
     });
+  }
+
+  /** The anon key this session reads tables with. Save it — see {@link join}. */
+  get anonKey(): string {
+    return this.#anonKey;
+  }
+
+  /**
+   * What a bot needs to come back as itself, minus the seed.
+   *
+   * Persist this next to the seed after a first {@link join}. The invite is
+   * spent once and cannot be replayed, which is the point of an invite.
+   */
+  get config(): { url: string; anonKey: string; serverId: string } {
+    return { url: this.url, anonKey: this.#anonKey, serverId: this.serverId };
+  }
+
+  /**
+   * Claim an invite and come back a member. The first run, and only the first.
+   *
+   * BOTS.md §1: a bot is added by invite, the same as a person, because an
+   * invite already carries exactly the right thing — a per-server grant of
+   * scoped permissions, revocable by whoever minted it. This is what makes that
+   * one paste rather than an expedition: the admin sends the same link they
+   * would send a person, and everything else is derived or handed back.
+   *
+   * The order is forced and worth stating. The identity is scoped to
+   * `(host, serverId)`, so the invite has to be resolved *before* the keypair
+   * exists; the SIWS login creates the auth identity that `register` then binds
+   * a profile to. Getting it the other way round derives a keypair for a server
+   * you turn out not to be joining.
+   *
+   * Save {@link config} afterwards and construct a [BotSession] directly on
+   * every later run: an invite is spent, and a second `join` with the same one
+   * fails as it should.
+   */
+  static async join(options: {
+    /** The invite link, in any of its three shapes. */
+    invite: string;
+    /** 32 random bytes, kept out of the repo. Whoever holds it *is* the bot. */
+    seed: Buffer;
+    username: string;
+    displayName?: string;
+  }): Promise<BotSession> {
+    const invite = parseInvite(options.invite);
+    if (!invite) {
+      throw new BotError(
+        `Not an invite: ${options.invite}. Expected "<server-url>#<code>", or ` +
+          'the rift:// or https:// form of the same thing.',
+      );
+    }
+
+    // The server id first — the identity is scoped to it.
+    const resolved = await callUnauthenticated(invite.serverUrl, 'resolve_invite', {
+      invite_code: invite.inviteCode,
+    });
+    const serverId = resolved.server_id as string;
+
+    // A session with no anon key: `login` and `register` are edge functions and
+    // need none. Nothing touches a table until `register` hands one back.
+    const session = new BotSession(invite.serverUrl, '', serverId, options.seed);
+    await session.login();
+
+    const context = await session.callFunction('register', {
+      invite_code: invite.inviteCode,
+      public_key: session.identity.publicKey.toString('base64'),
+      stable_id: session.identity.stableId,
+      username: options.username,
+      display_name: options.displayName ?? options.username,
+    });
+
+    const anonKey = context.supabase_key as string | undefined;
+    if (!anonKey) {
+      throw new BotError('register returned no anon key, so no table is readable');
+    }
+    session.#anonKey = anonKey;
+    // `register` issues no token — the one from `login` is already the caller's
+    // — but the profile row now exists, and the claims a policy reads come from
+    // a fresh one.
+    await session.login();
+    return session;
   }
 
   /** This bot's user id on this server. Null until the first {@link login}. */
@@ -187,4 +269,28 @@ export class BotSession {
 function subjectOf(token: string): string {
   const payload = token.split('.')[1];
   return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')).sub;
+}
+
+/**
+ * POST to an edge function with no session at all.
+ *
+ * `resolve_invite` runs before the caller is anybody — it is what hands out the
+ * server id the identity is scoped to — so there is nothing to authenticate
+ * with yet, and deliberately nothing it grants: you already hold the code.
+ */
+async function callUnauthenticated(
+  url: string,
+  name: string,
+  body: unknown,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${url}/functions/v1/${name}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json()) as Record<string, unknown>;
+  if (json.success !== true) {
+    throw new BotError(`${name} failed: ${json.error ?? res.status}`);
+  }
+  return json.data as Record<string, unknown>;
 }

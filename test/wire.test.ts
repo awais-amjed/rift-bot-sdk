@@ -13,6 +13,7 @@ import {
   verifySignature,
 } from '../src/crypto.ts';
 import { decodeBody, deriveDmKey, encodeBody } from '../src/dm.ts';
+import { parseInvite } from '../src/invite.ts';
 import { deriveChatIdentity, unwrapKey } from '../src/sealed.ts';
 
 /**
@@ -203,4 +204,42 @@ test('a signature verifies, and one bit off does not', () => {
   const payload = vectors.signed_payload.channel;
   assert.ok(verifySignature(payload, vectors.signature.base64, identity.publicKey));
   assert.ok(!verifySignature(payload + 'x', vectors.signature.base64, identity.publicKey));
+});
+
+/// An invite link, which is the one string an admin hands a bot.
+///
+/// Not crypto, but a format two implementations have to read the same way —
+/// and the failure is the quiet kind: a bot that cannot join a server whose
+/// invite works for everybody else. These are the three shapes
+/// `lib/data/invite_link.dart` builds.
+
+test('the plain form', () => {
+  const invite = parseInvite('http://localhost:8000#abc123');
+  assert.equal(invite?.serverUrl, 'http://localhost:8000');
+  assert.equal(invite?.inviteCode, 'abc123');
+});
+
+test('the app-scheme form keeps the wrapper off the server URL', () => {
+  // Split on the last `#` alone and the code comes off correctly while
+  // `rift://join#http://...` stays glued together as the "URL".
+  const invite = parseInvite('rift://join#http://localhost:8000#abc123');
+  assert.equal(invite?.serverUrl, 'http://localhost:8000');
+  assert.equal(invite?.inviteCode, 'abc123');
+});
+
+test('the clickable form', () => {
+  const invite = parseInvite('https://joinrift.app/join#https://x.supabase.co#dead99');
+  assert.equal(invite?.serverUrl, 'https://x.supabase.co');
+  assert.equal(invite?.inviteCode, 'dead99');
+});
+
+test('a trailing slash on the server URL is dropped', () => {
+  // The app trims it when building; an invite typed by hand may not have been.
+  assert.equal(parseInvite('http://localhost:8000/#abc')?.serverUrl, 'http://localhost:8000');
+});
+
+test('anything that is not a complete pair is not an invite', () => {
+  for (const input of ['', 'http://localhost:8000', '#abc', '   ']) {
+    assert.equal(parseInvite(input), null, `"${input}" parsed as an invite`);
+  }
 });
