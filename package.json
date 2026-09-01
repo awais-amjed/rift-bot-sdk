@@ -1,12 +1,25 @@
 {
   "name": "@rift/bot",
   "version": "0.1.0",
-  "description": "Write a Rift bot. Auth, commands, replies and panels against a self-hosted server.",
+  "description": "Write a Rift bot. Auth, commands, replies, panels and voice against a self-hosted server.",
   "type": "module",
   "private": true,
   "exports": "./src/index.ts",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test test/*.test.ts"
+  },
+  "peerDependencies": {
+    "@livekit/rtc-node": ">=0.13.0"
+  },
+  "peerDependenciesMeta": {
+    "@livekit/rtc-node": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@livekit/rtc-node": "^0.13.34"
   }
 }

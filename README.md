@@ -15,9 +15,10 @@ await bot.listen(async (message) => {
 ```
 
 `example/echo_bot.ts` is a complete one in about thirty lines;
-`example/panel_bot.ts` runs a poll on a panel.
+`example/panel_bot.ts` runs a poll on a panel; `example/music_bot.ts` plays into
+a call.
 
-## No build step, no dependencies
+## No build step, and nothing to install for a text bot
 
 ```bash
 node example/echo_bot.ts <url> <anonKey> <serverId> <seedFile>
@@ -28,13 +29,18 @@ compile. And a bot needs exactly four primitives — HMAC-SHA256, an Ed25519
 keypair from a seed, one signature, and base64 — all of which `node:crypto` has
 had for years.
 
-There is **no X25519, no AES-GCM and no Argon2id here at all**, and that is not
-minimalism for its own sake: a bot never holds a channel key, so it never opens
-anything. The whole of the crypto is `src/crypto.ts`, about a hundred lines.
+There is **no Argon2id here at all**, and no X25519 or AES-GCM outside
+`src/sealed.ts`: a bot never holds a channel key, so the only thing it ever
+opens is the one key a member seals for it — its own media key for an encrypted
+call. Everything else is `src/crypto.ts`, about a hundred lines.
 
 The one piece of TypeScript this package avoids is a constructor parameter
 property, which is the only syntax that needs code generation rather than
 erasure. Buildless is worth four extra lines.
+
+Voice is the single exception, and it is arranged so it stays one: the media
+library is an optional peer imported inside `joinVoice`, so a bot that never
+calls it never loads it and never installs it.
 
 ## What a bot is
 
@@ -55,7 +61,8 @@ bots, and neither server can correlate them.
 ## What a bot can hear
 
 **Only what it is addressed.** Not the message before it, not the one that
-mentions it, not the rest of the channel it is sitting in.
+mentions it, not the rest of the channel it is sitting in. **And not a call it
+is sitting in either** — see Voice.
 
 That is not this package being careful. It is `messages_select`:
 
@@ -126,6 +133,65 @@ stores fine, verifies as false, and renders as nothing: the bot watches it send
 and nobody ever sees it. That failure is invisible in both codebases and
 obvious in a vector.
 
+## Voice
+
+```ts
+const voice = await bot.joinVoice(channelId);
+await voice.play(ffmpeg.stdout);   // signed 16-bit PCM, 48kHz stereo
+await voice.leave();
+```
+
+`example/music_bot.ts` is the whole thing: `/play <url>` joins the channel you
+are in, decodes with `ffmpeg`, and puts a Stop button on a panel.
+
+**Calls are end-to-end encrypted**, and a bot is audible and deaf at the same
+time. Two things hold that, and only the second is arithmetic:
+
+- its token is minted `canSubscribe: false`, and
+- it is given a **different key** from the members:
+
+```
+memberKey = channelKey
+botKey    = HMAC-SHA256(channelKey, "voicebot:v1:<botId>")
+```
+
+Members hold the channel key, derive the bot's, and hear it. The bot is sealed
+only its own, and HMAC does not run backwards — so it cannot reach the channel
+key and cannot decrypt a single member's audio. Two bots in one call cannot
+decrypt each other either.
+
+With one shared room key none of that is expressible: encrypting is what makes a
+bot audible, and the key that encrypts also decrypts (BOTS.md §2). Two keys and
+a one-way function are what buy it.
+
+**A music bot needs no grant.** Speaking was never the half that had to be
+allowed. A bot that genuinely needs to listen — transcription, an AI that answers
+out loud — is granted the channel key itself by an admin, per voice channel, and
+the channel shows a marker saying so. That is a key grant with everything §6 says
+about one: it cannot be taken back, only rotated past. Check `voice.canHear`
+rather than wondering why no audio arrives.
+
+A member's client is what seals the key, so a bot cannot be the first thing in a
+channel. Until somebody has been in it, `get_channel_token` says so rather than
+letting the bot join and publish frames nobody can open.
+
+### Installing it
+
+Media is `@livekit/rtc-node`, an **optional peer dependency**, imported only by
+`joinVoice`. A bot that answers `/echo` never loads a WebRTC stack.
+
+```bash
+npm install @livekit/rtc-node   # in *your* bot's package
+```
+
+Inside this repo it is already a devDependency, because the examples need it —
+`npm install` in `bot_sdk_ts/` is enough to run `music_bot.ts`. (Running
+`npm install @livekit/rtc-node` *here* does nothing: npm will not install a
+package the root declares as an optional peer of itself.)
+
+Decoding is yours. This package publishes PCM and has no opinion about codecs,
+which is what keeps "a URL" an `ffmpeg` flag rather than a dependency tree.
+
 ## What this package does not do yet
 
 - **Realtime for *reading*.** `listen` polls, every two seconds by default.
@@ -133,10 +199,10 @@ obvious in a vector.
   once for anyone with the channel open. Polling has no reconnect logic to get
   wrong and spends nothing from the server's shared event budget (~100/second,
   which every member's unread badges also draw on).
-- **Voice.** A bot can already get a LiveKit token — `get_channel_token` does
-  not special-case bots, and `voice_roster` reads participants by identity
-  without asking what they are. What is missing is a wrapper, and the media
-  itself is `@livekit/rtc-node`'s job rather than this package's: a text bot
-  should not pay for a media dependency it never loads.
+- **Hearing a call.** The grant exists and the token honours it, but this
+  package has no `onAudio`: a granted bot connects and subscribes, and reading
+  the frames is `@livekit/rtc-node`'s API directly for now.
+- **Joining from an invite link.** `resolve_invite` and `register` are still
+  done by hand; this package starts from a server id and a seed.
 - **Attachments.** A bot's reply is text or a panel.
 - **DMs.** A bot can be DM'd, and this SDK does not read them yet.

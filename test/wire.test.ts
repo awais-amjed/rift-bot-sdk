@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createPublicKey, verify } from 'node:crypto';
+import { createHmac, createPublicKey, verify } from 'node:crypto';
 
 import {
   conversationContext,
@@ -11,6 +11,7 @@ import {
   signedPayload,
   toBase58,
 } from '../src/crypto.ts';
+import { deriveChatIdentity, unwrapKey } from '../src/sealed.ts';
 
 /**
  * The whole reason `WIRE.md` and the vectors exist.
@@ -106,4 +107,49 @@ test('and this implementation can verify it', () => {
       Buffer.from(vectors.signature.base64, 'base64'),
     ),
   );
+});
+
+/// `wrap:v1` — the format a member seals a bot's media key in.
+///
+/// Both halves of this are new territory for this package: it had no X25519 and
+/// no AES-GCM at all until a bot needed to open something. Which makes it
+/// exactly the kind of second implementation the vectors exist for — the two
+/// codebases share no code and meet at one JSON file, and a port that decoded
+/// the doubled base64 once, or read the GCM tag from the wrong end, would fail
+/// here and nowhere else.
+
+test('a bot opens what a member sealed for it', () => {
+  const identity = deriveChatIdentity(seed, vectors.chat_identity.host);
+  // Same X25519 public key the Dart side derived, or nothing below can work.
+  assert.equal(
+    identity.publicKey.toString('base64'),
+    vectors.chat_identity.public_key_base64,
+  );
+
+  const opened = unwrapKey(identity, vectors.wrapped_key);
+  assert.equal(opened.toString('base64'), vectors.wrapped_key.key_base64);
+});
+
+test('tampering with the sealed bytes is caught, not silently opened', () => {
+  const identity = deriveChatIdentity(seed, vectors.chat_identity.host);
+  const bad = Buffer.from(vectors.wrapped_key.ciphertext, 'base64');
+  bad[0] ^= 0xff;
+  assert.throws(() =>
+    unwrapKey(identity, {
+      ...vectors.wrapped_key,
+      ciphertext: bad.toString('base64'),
+    }),
+  );
+});
+
+test('the key a bot speaks with is a one-way function of the channel key', () => {
+  // Members derive this and hear the bot; the bot is given only the result and
+  // cannot invert it to reach the channel key. That asymmetry is the whole of
+  // "publishes but does not listen" (BOTS.md §6b).
+  const channelKey = Buffer.from(vectors.wrapped_key.key_base64, 'base64');
+  const derived = createHmac('sha256', channelKey)
+    .update(`voicebot:v1:${vectors.bot_voice_key.bot_id}`, 'utf8')
+    .digest();
+  assert.equal(derived.toString('base64'), vectors.bot_voice_key.key_base64);
+  assert.notEqual(derived.toString('base64'), vectors.wrapped_key.key_base64);
 });

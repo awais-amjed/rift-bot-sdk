@@ -1,0 +1,342 @@
+import { BotError, type BotSession } from './session.ts';
+import { unwrapKey, type Wrapped } from './sealed.ts';
+
+/**
+ * A bot in a voice channel.
+ *
+ * **A bot publishes; it does not hear.** Two things hold that, and only the
+ * second is arithmetic. The token is minted with `canSubscribe: false` unless
+ * an admin granted listening (migration 031). And the call is end-to-end
+ * encrypted, so what a bot can decrypt is decided by which key it was given:
+ *
+ *     botKey = HMAC-SHA256(channelKey, "voicebot:v1:<botId>")
+ *
+ * Every member holds `channelKey` and derives `botKey`, so the room hears the
+ * bot. The bot is sealed only `botKey`, and HMAC does not run backwards, so it
+ * cannot reach `channelKey` — a music bot is audible and deaf at the same time,
+ * which one shared room key cannot express (BOTS.md §2, §6b).
+ *
+ * A member's client seals that key; the bot never derives it and never sees the
+ * channel key. Until some member has been in the channel, there is no key and
+ * `get_channel_token` says so rather than letting the bot join inaudibly.
+ *
+ * The media itself is `@livekit/rtc-node`'s, imported here and nowhere else and
+ * only when {@link Bot.joinVoice} is called. That is why it is an optional
+ * dependency rather than a real one: a bot that answers `/echo` should not
+ * install a WebRTC stack it never loads, and most bots are that bot.
+ */
+
+/** Just enough of rtc-node's E2EE manager to put a key in the right slot. */
+interface RtcE2EEManager {
+  keyProvider?: { setSharedKey(key: Uint8Array, keyIndex: number): void };
+}
+
+/** The shape of `@livekit/rtc-node` this file uses, so the rest stays typed. */
+interface RtcModule {
+  Room: new () => RtcRoom;
+  AudioSource: new (sampleRate: number, channels: number) => RtcAudioSource;
+  LocalAudioTrack: { createAudioTrack(name: string, source: RtcAudioSource): unknown };
+  AudioFrame: new (
+    data: Int16Array,
+    sampleRate: number,
+    channels: number,
+    samplesPerChannel: number,
+  ) => unknown;
+  TrackPublishOptions: new () => { source: number };
+  TrackSource: { SOURCE_MICROPHONE: number };
+}
+
+interface RtcRoom {
+  connect(url: string, token: string, options?: unknown): Promise<void>;
+  disconnect(): Promise<void>;
+  localParticipant?: { publishTrack(track: unknown, options: unknown): Promise<unknown> };
+}
+
+interface RtcAudioSource {
+  captureFrame(frame: unknown): Promise<void>;
+  close?(): Promise<void>;
+}
+
+/** What LiveKit wants and what `ffmpeg -f s16le -ar 48000 -ac 2` produces. */
+export const SAMPLE_RATE = 48000;
+export const CHANNELS = 2;
+
+/**
+ * How much audio one `AudioFrame` carries. 10ms is LiveKit's own tick — larger
+ * frames add latency to a skip, smaller ones spend more time in the bridge than
+ * in the codec.
+ */
+export const FRAME_SAMPLES = SAMPLE_RATE / 100;
+
+/** Bytes in one frame: samples × channels × two bytes a sample. */
+const FRAME_BYTES = FRAME_SAMPLES * CHANNELS * 2;
+
+/**
+ * Cut a byte stream into whole audio frames.
+ *
+ * Exported, and a generator, so it can be tested without a WebRTC stack — the
+ * carry is the part worth testing. A stream hands over whatever the pipe had,
+ * so a chunk boundary almost never lands on a frame boundary; publishing a
+ * short frame at each one instead of carrying the tail forward puts an audible
+ * click wherever the chunks happen to fall, several a second on a 64KB pipe.
+ * That is a bug you can only hear, which is the kind worth a test.
+ *
+ * A trailing partial frame at the end of the stream is dropped. It is under
+ * 10ms of silence at the end of a track, and padding it would mean inventing
+ * samples nobody sent.
+ */
+export async function* audioFrames(
+  pcm: AsyncIterable<Uint8Array>,
+  shouldContinue: () => boolean = () => true,
+): AsyncGenerator<Int16Array> {
+  let carry = new Uint8Array(0);
+
+  for await (const chunk of pcm) {
+    if (!shouldContinue()) return;
+
+    let buffer: Uint8Array;
+    if (carry.length === 0) {
+      buffer = chunk;
+    } else {
+      buffer = new Uint8Array(carry.length + chunk.length);
+      buffer.set(carry, 0);
+      buffer.set(chunk, carry.length);
+    }
+
+    let offset = 0;
+    while (buffer.length - offset >= FRAME_BYTES) {
+      // Copied rather than viewed: `subarray` shares the chunk's memory, and a
+      // frame outlives this iteration inside LiveKit's queue.
+      const bytes = buffer.slice(offset, offset + FRAME_BYTES);
+      yield new Int16Array(bytes.buffer, bytes.byteOffset, FRAME_SAMPLES * CHANNELS);
+      offset += FRAME_BYTES;
+    }
+    carry = buffer.slice(offset);
+  }
+}
+
+export interface VoiceOptions {
+  /**
+   * Distinguishes two connections held by the same bot. Identity is
+   * `<userId>~<deviceId>`, and a second connection reusing the first's id
+   * disconnects it — so a bot playing in two channels at once needs two.
+   * Defaults to the channel id, which is unique by construction.
+   */
+  deviceId?: string;
+}
+
+export class VoiceConnection {
+  readonly channelId: string;
+
+  /**
+   * Whether this bot was granted listening here.
+   *
+   * Read from the token's own grant rather than from the table, because the
+   * token is what LiveKit will actually enforce. Worth surfacing: a
+   * transcription bot that was never granted would otherwise sit in the room
+   * receiving nothing and look like a bug in its own audio pipeline.
+   */
+  readonly canHear: boolean;
+
+  readonly #rtc: RtcModule;
+  readonly #room: RtcRoom;
+  #source: RtcAudioSource | null = null;
+  #playing = false;
+
+  /** Which slot in LiveKit's key ring this call's key occupies. */
+  readonly keyIndex: number;
+
+  constructor(
+    channelId: string,
+    canHear: boolean,
+    rtc: RtcModule,
+    room: RtcRoom,
+    keyIndex: number,
+  ) {
+    this.channelId = channelId;
+    this.canHear = canHear;
+    this.#rtc = rtc;
+    this.#room = room;
+    this.keyIndex = keyIndex;
+  }
+
+  /**
+   * Publish signed 16-bit little-endian PCM at 48kHz stereo, and resolve when
+   * it runs out.
+   *
+   * Anything that yields `Buffer`s works — an `ffmpeg` child process's stdout
+   * is the usual one, and it is what turns "a URL" into something publishable
+   * without this package having an opinion about codecs.
+   *
+   * The cutting into frames is [audioFrames], which is where the carry between
+   * chunks lives.
+   */
+  async play(pcm: AsyncIterable<Uint8Array>): Promise<void> {
+    if (this.#playing) throw new BotError('already playing on this connection');
+    this.#playing = true;
+
+    const source = new this.#rtc.AudioSource(SAMPLE_RATE, CHANNELS);
+    this.#source = source;
+
+    const track = this.#rtc.LocalAudioTrack.createAudioTrack('audio', source);
+    const options = new this.#rtc.TrackPublishOptions();
+    options.source = this.#rtc.TrackSource.SOURCE_MICROPHONE;
+    await this.#room.localParticipant?.publishTrack(track, options);
+
+    try {
+      for await (const samples of audioFrames(pcm, () => this.#playing)) {
+        await source.captureFrame(
+          new this.#rtc.AudioFrame(samples, SAMPLE_RATE, CHANNELS, FRAME_SAMPLES),
+        );
+      }
+    } finally {
+      this.#playing = false;
+      await source.close?.();
+      this.#source = null;
+    }
+  }
+
+  /** Stop the current {@link play}. The stream is left to whoever owns it. */
+  stop(): void {
+    this.#playing = false;
+  }
+
+  get playing(): boolean {
+    return this.#playing;
+  }
+
+  /** Leave the call. */
+  async leave(): Promise<void> {
+    this.stop();
+    await this.#source?.close?.();
+    await this.#room.disconnect();
+  }
+}
+
+/**
+ * Connect to a channel's room.
+ *
+ * The token comes from `get_channel_token`, the same edge function the app
+ * calls — there is no bot path here either, which is what stops the two
+ * drifting. The function decides what the token may do; this only reads it back.
+ */
+export async function joinVoice(
+  session: BotSession,
+  channelId: string,
+  options: VoiceOptions = {},
+): Promise<VoiceConnection> {
+  const rtc = await loadRtc();
+
+  // The media key first: without it the bot would connect, publish frames
+  // nobody can decrypt, and look like a working bot that everyone has muted.
+  const media = await mediaKey(session, channelId);
+
+  const data = await session.callFunction('get_channel_token', {
+    channel_id: channelId,
+    device_id: options.deviceId ?? channelId,
+  });
+  const token = data.token as string;
+
+  const room = new rtc.Room();
+  await room.connect(await livekitUrl(session), token, {
+    autoSubscribe: true,
+    e2ee: { keyProviderOptions: { sharedKey: media.key } },
+  });
+
+  // Shared-key mode is right for a bot and only for a bot: it publishes with
+  // one key and subscribes to nothing it could decrypt anyway. Members run in
+  // per-participant mode, which is what lets them hold a different key for the
+  // bot than for each other.
+  //
+  // The slot has to match. Rift addresses keys by channel key *version*, mapped
+  // onto LiveKit's ring as `version % 16`; encrypting into slot 0 while the
+  // room reads slot 1 is a bot that connects, publishes, and is silent, with
+  // nothing anywhere reporting an error.
+  const manager = (room as unknown as { e2eeManager?: RtcE2EEManager }).e2eeManager;
+  manager?.keyProvider?.setSharedKey(media.key, media.keyIndex);
+
+  return new VoiceConnection(channelId, grantAllowsSubscribe(token), rtc, room, media.keyIndex);
+}
+
+/**
+ * The key this bot's media is encrypted with in [channelId], and its ring slot.
+ *
+ * Sealed by a member and read back here — the bot cannot derive it, which is
+ * the point: it is a one-way function of a channel key the bot does not have.
+ * Absent until some member has opened the channel, and that case is worth its
+ * own sentence rather than a generic failure, because it is normal and it
+ * clears by itself.
+ */
+async function mediaKey(
+  session: BotSession,
+  channelId: string,
+): Promise<{ key: Buffer; keyIndex: number }> {
+  const data = await session.callFunction('get_channel_key', {
+    channel_id: channelId,
+  });
+  const sealed = data.my_voice_key as (Wrapped & { key_version: number }) | null;
+  if (!sealed) {
+    throw new BotError(
+      'No media key for this channel yet. A member has to have been in it ' +
+        'before a bot can speak — their client is what seals the key.',
+    );
+  }
+
+  return {
+    key: unwrapKey(session.chatIdentity, sealed),
+    // `version % 16` — the ring is fixed-size and every client has to agree on
+    // the mapping, or a bot encrypts into a slot nobody reads.
+    keyIndex: sealed.key_version % 16,
+  };
+}
+
+/**
+ * Where this server's LiveKit lives.
+ *
+ * On the server's own `servers` row, which every member can read — the API
+ * secret is the part that is hidden, and a bot never needs it because it never
+ * mints its own token.
+ */
+async function livekitUrl(session: BotSession): Promise<string> {
+  const rows = await session.select<{ livekit_url: string }>(
+    `servers?select=livekit_url&id=eq.${session.serverId}`,
+  );
+  const url = rows[0]?.livekit_url;
+  if (!url) throw new BotError('this server has no LiveKit URL configured');
+  return url;
+}
+
+/**
+ * `video.canSubscribe` out of the LiveKit JWT, which defaults to true.
+ *
+ * Exported for its test. Unreadable is false, not true: a bot told it can hear
+ * when it cannot spends its time debugging its audio pipeline, and one told it
+ * cannot when it can is merely pessimistic.
+ */
+export function grantAllowsSubscribe(token: string): boolean {
+  try {
+    const payload = JSON.parse(
+      Buffer.from(token.split('.')[1], 'base64url').toString('utf8'),
+    );
+    return payload?.video?.canSubscribe !== false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `@livekit/rtc-node`, or an error that says what to install.
+ *
+ * A bare "Cannot find module" from a dynamic import inside a dependency is one
+ * of the less helpful things a runtime says, and the fix here is one command.
+ */
+async function loadRtc(): Promise<RtcModule> {
+  try {
+    return (await import('@livekit/rtc-node')) as unknown as RtcModule;
+  } catch {
+    throw new BotError(
+      'Voice needs @livekit/rtc-node, which this package does not install by ' +
+        'default. Run: npm install @livekit/rtc-node',
+    );
+  }
+}

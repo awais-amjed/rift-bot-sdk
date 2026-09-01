@@ -1,4 +1,5 @@
 import { deriveServerIdentity, signSiws, type ServerIdentity } from './crypto.ts';
+import { deriveChatIdentity, type ChatIdentity } from './sealed.ts';
 
 /** Anything the server refused. */
 export class BotError extends Error {}
@@ -19,6 +20,13 @@ export class BotSession {
   readonly serverId: string;
   readonly identity: ServerIdentity;
 
+  /** The X25519 identity members seal things to.
+   *
+   *  A bot has one for exactly one reason — its media key in an encrypted call
+   *  (BOTS.md §6b) — and it is derived here rather than from a stored seed so
+   *  the seed itself does not have to live on this object. */
+  readonly chatIdentity: ChatIdentity;
+
   // Fields declared rather than written as constructor parameter properties:
   // Node runs this file by *stripping* types, and a parameter property is the
   // one piece of TypeScript that has to generate code rather than erase it. The
@@ -32,6 +40,21 @@ export class BotSession {
     this.#anonKey = anonKey;
     this.serverId = serverId;
     this.identity = deriveServerIdentity(seed, new URL(url).hostname, serverId);
+    // Per host, not per server, and pinned at v1 — see WIRE.md §2.
+    this.chatIdentity = deriveChatIdentity(seed, new URL(url).hostname);
+  }
+
+  /**
+   * Publish this bot's chat public key so members can seal things to it.
+   *
+   * Idempotent and cheap. Without it a bot is invisible to the sealing loop:
+   * `get_channel_key` only lists bots that have published one, so a bot that
+   * skipped this would wait forever for a media key nobody can produce.
+   */
+  publishChatKey(): Promise<void> {
+    return this.patch(`users?id=eq.${this.#userId}`, {
+      chat_public_key: this.chatIdentity.publicKey.toString('base64'),
+    });
   }
 
   /** This bot's user id on this server. Null until the first {@link login}. */

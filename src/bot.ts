@@ -1,5 +1,6 @@
 import { signedPayload, sign } from './crypto.ts';
 import { BotError, type BotSession } from './session.ts';
+import { joinVoice, type VoiceConnection, type VoiceOptions } from './voice.ts';
 
 /** One command, or one press, as the bot receives it. */
 export interface BotMessage {
@@ -82,6 +83,10 @@ export class Bot {
    */
   async listen(onMessage: (message: BotMessage) => void | Promise<void>): Promise<void> {
     await this.session.login();
+    // So members can seal this bot things — today that means its media key for
+    // an encrypted call. Idempotent, and a bot that skipped it would simply
+    // never appear in the sealing loop.
+    await this.session.publishChatKey();
     this.#lastSeen = await this.#newestId();
     this.#timer = setInterval(() => void this.#drain(onMessage), this.pollMs);
   }
@@ -126,6 +131,22 @@ export class Bot {
     });
     await this.session.ringDoorbell(channelId);
     return rows.length === 0 ? null : rows[0].id;
+  }
+
+  /**
+   * Join a voice channel, and get something to publish audio through.
+   *
+   * **The bot publishes; it does not hear.** Its token is minted with
+   * `canSubscribe: false` unless an admin granted it listening on this channel
+   * — check {@link VoiceConnection.canHear} rather than wondering why no audio
+   * arrives. A music bot is unaffected: playing is the half that never needed
+   * a grant.
+   *
+   * Needs `@livekit/rtc-node`, which is an optional dependency and is imported
+   * only by this call. A text bot never loads a WebRTC stack.
+   */
+  joinVoice(channelId: string, options?: VoiceOptions): Promise<VoiceConnection> {
+    return joinVoice(this.session, channelId, options);
   }
 
   /** Redraw a panel in place. Only the bot that posted it may. */
