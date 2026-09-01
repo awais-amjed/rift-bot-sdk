@@ -5,8 +5,8 @@ import {
   FRAME_SAMPLES,
   SAMPLE_RATE,
   audioFrames,
-  grantAllowsSubscribe,
-} from '../src/voice.ts';
+} from '../src/audio_frames.ts';
+import { grantAllowsSubscribe } from '../src/voice.ts';
 
 /// What a bot may hear, and how what it says gets cut up.
 ///

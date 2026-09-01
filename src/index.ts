@@ -1,12 +1,13 @@
 export { BotSession, BotError } from './session.ts';
 export { Bot, isAction, command, args, type BotMessage, type PanelBlock } from './bot.ts';
+export { VoiceConnection, joinVoice, type VoiceOptions } from './voice.ts';
 export {
-  VoiceConnection,
-  joinVoice,
   SAMPLE_RATE,
   CHANNELS,
-  type VoiceOptions,
-} from './voice.ts';
+  KEY_RING_SIZE,
+  FRAME_SAMPLES,
+  audioFrames,
+} from './audio_frames.ts';
 export {
   deriveChatIdentity,
   unwrapKey,
