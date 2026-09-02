@@ -133,8 +133,9 @@ the summon when they send it from inside a call:
 ```ts
 await session.publishManifest({
   commands: [
-    { name: 'play', description: 'Play something', usage: '<url>', voice: true },
-    { name: 'stop', description: 'Stop playing' },
+    { name: 'play', description: 'Play something', usage: '<url>', summon: true },
+    { name: 'stop', description: 'Stop the track, stay in the call' },
+    { name: 'disconnect', description: 'Stop and leave the call', dismiss: true },
   ],
 });
 
@@ -142,15 +143,22 @@ const [summon] = await bot.summons();          // newest first
 if (summon) await bot.joinVoice(summon.channelId);
 ```
 
+Rift knows none of those verb names. `summon` and `dismiss` are what **you**
+say a command means, and the client acts on them — which is why `stop` and
+`disconnect` are two commands rather than one. Ending a track and leaving the
+room are different things to want, and a bot with neither flag is simply never
+summoned by typing.
+
 `summons()` is the only source that works for a **private** voice channel — the
 bot is not in the roster there either. Call `bot.dismissSelf(channelId)` when
 you leave: it drops the summon and the media key together, so members stop
 seeing the bot listed as in the call.
 
-Mark the verb that means *leave* with `dismiss: true` — `/stop`, `/disconnect`.
-The client drops the summon as well as sending it, so a bot that has crashed
-mid-track still goes. It lands after the message, so you still get to edit your
-panel and say you stopped.
+`dismiss: true` is a backstop as much as a convenience: the client drops the
+summon whether or not your bot is still running, so a crashed one still loses
+its key and its connection. It lands after the message, so a bot that *is*
+running still gets to edit its panel and say it stopped — call
+`bot.dismissSelf(channelId)` there and tidy up properly.
 
 A summon lets a bot **publish and nothing else**. Its token still carries
 `canSubscribe: false` unless an admin granted listening, and its media key is

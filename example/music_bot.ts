@@ -47,6 +47,10 @@ interface Playing {
 // this is an example of the shape, not of how to keep state.
 const playing = new Map<string, Playing>();
 
+/// The call itself, which outlives any one track: `/stop` ends what is playing
+/// and stays, `/disconnect` is what leaves.
+const connections = new Map<string, VoiceConnection>();
+
 /** Decode anything ffmpeg understands into what LiveKit wants. */
 function decode(source: string): ChildProcessWithoutNullStreams {
   return spawn('ffmpeg', [
@@ -65,7 +69,7 @@ function decode(source: string): ChildProcessWithoutNullStreams {
  * Where to play — the summon first, the roster second.
  *
  * A summon is written by the caller's own client when they send a command this
- * bot's manifest marked `voice: true`, and it is the only source that works for
+ * bot's manifest marked `summon: true`, and it is the only source that works for
  * a **private** voice channel: a bot cannot see one, so it is not in the roster
  * either. The roster is the fallback for a bot with no manifest, or a caller
  * whose client is older than summoning.
@@ -80,21 +84,43 @@ async function voiceChannelOf(userId: string): Promise<string | null> {
   return (data.roster as Record<string, string>)[userId] ?? null;
 }
 
-async function stop(channelId: string): Promise<void> {
+/**
+ * End the track. **Stays in the call**, ready for the next one.
+ *
+ * Two different things people mean by "stop", and running them together is the
+ * mistake: somebody who wanted quiet for a minute should not have to summon the
+ * bot back. Leaving is [disconnect].
+ */
+async function stopPlaying(channelId: string): Promise<void> {
   const current = playing.get(channelId);
   if (!current) return;
   playing.delete(channelId);
   current.ffmpeg.kill('SIGKILL');
-  await current.voice.leave();
-  // Give the welcome back with the connection. Dropping the summon drops the
-  // media key too, so the bot stops being able to arrive rather than merely
-  // stopping — and members stop seeing it listed as in the call.
-  await bot.dismissSelf(channelId);
+  current.voice.stop();
   if (current.panelId !== null) {
     await bot.editPanel(current.textChannel, current.panelId, [
       { type: 'heading', text: 'Stopped' },
     ]);
   }
+}
+
+/**
+ * End the track and leave.
+ *
+ * `dismissSelf` gives the welcome back with the connection: dropping the summon
+ * drops the media key too, so the bot stops being able to *arrive* rather than
+ * merely stopping, and members stop seeing it listed as in the call. A client
+ * sending a command marked `dismiss: true` does the same thing from its end, so
+ * this still happens for a bot that has crashed — but a bot that is running
+ * should tidy up after itself rather than wait to be removed.
+ */
+async function disconnect(channelId: string): Promise<void> {
+  const current = playing.get(channelId);
+  await stopPlaying(channelId);
+  await current?.voice.leave();
+  await connections.get(channelId)?.leave();
+  connections.delete(channelId);
+  await bot.dismissSelf(channelId);
 }
 
 async function play(message: BotMessage, source: string): Promise<void> {
@@ -103,9 +129,16 @@ async function play(message: BotMessage, source: string): Promise<void> {
     await bot.replyPrivately(message, 'Join a voice channel first.');
     return;
   }
-  await stop(voiceChannel);
+  await stopPlaying(voiceChannel);
 
-  const voice = await bot.joinVoice(voiceChannel);
+  // Joined once and kept. Leaving between tracks would mean a fresh token, a
+  // fresh key fetch and a participant that flickers in and out of the room for
+  // everybody watching.
+  let voice = connections.get(voiceChannel);
+  if (!voice) {
+    voice = await bot.joinVoice(voiceChannel);
+    connections.set(voiceChannel, voice);
+  }
   const ffmpeg = decode(source);
 
   const panelId = await bot.panel(message.channelId, [
@@ -125,7 +158,9 @@ async function play(message: BotMessage, source: string): Promise<void> {
     .finally(() => {
       // Only tidy up if this is still the track that is playing — a `/play`
       // that replaced it has already left and started its own.
-      if (playing.get(voiceChannel)?.voice === voice) void stop(voiceChannel);
+      if (playing.get(voiceChannel)?.voice === voice) {
+        void stopPlaying(voiceChannel);
+      }
     });
 }
 
@@ -133,7 +168,7 @@ await bot.listen(async (message) => {
   if (isAction(message)) {
     if (message.actionId !== 'stop') return;
     for (const [channelId, current] of playing) {
-      if (current.panelId === message.panelId) await stop(channelId);
+      if (current.panelId === message.panelId) await stopPlaying(channelId);
     }
     return;
   }
@@ -150,26 +185,32 @@ await bot.listen(async (message) => {
     }
     case 'stop': {
       const voiceChannel = await voiceChannelOf(message.senderId);
-      if (voiceChannel) await stop(voiceChannel);
+      if (voiceChannel) await stopPlaying(voiceChannel);
+      return;
+    }
+    case 'disconnect': {
+      const voiceChannel = await voiceChannelOf(message.senderId);
+      if (voiceChannel) await disconnect(voiceChannel);
       return;
     }
   }
 });
 
-// `voice: true` is what tells a member's client to summon this bot into their
-// call when they type `/play` — without it the command still arrives and the
-// bot has nowhere to go, which in a private voice channel it cannot discover
-// any other way. `/stop` does not carry it: it is about a call the bot is
-// already in.
+// Rift knows none of these verbs. `summon` and `dismiss` are what the *author*
+// says a command means, and the client acts on them — which is why `/stop` and
+// `/disconnect` are two commands here rather than one: stopping a track and
+// leaving the room are different things to want, and somebody who wanted quiet
+// for a minute should not have to summon the bot back.
+//
+// `dismiss` on `/disconnect` is a backstop as much as a convenience: the client
+// drops the summon whether or not this bot is still running, so a crashed bot
+// still loses its key and its connection.
 await session.publishManifest({
   description: 'Plays a URL in your voice channel.',
   commands: [
-    { name: 'play', description: 'Play something', usage: '<url>', voice: true },
-    // `dismiss: true` is the mirror: the client drops the summon as well as
-    // sending this, so the bot leaves even if it has crashed mid-track or
-    // ignores the verb it advertised. Same thing "Send away" does from the
-    // participant menu, reachable by typing.
-    { name: 'stop', description: 'Stop playing and leave', dismiss: true },
+    { name: 'play', description: 'Play something', usage: '<url>', summon: true },
+    { name: 'stop', description: 'Stop the track, stay in the call' },
+    { name: 'disconnect', description: 'Stop and leave the call', dismiss: true },
   ],
 });
 
