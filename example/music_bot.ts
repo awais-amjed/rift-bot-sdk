@@ -165,7 +165,11 @@ await session.publishManifest({
   description: 'Plays a URL in your voice channel.',
   commands: [
     { name: 'play', description: 'Play something', usage: '<url>', voice: true },
-    { name: 'stop', description: 'Stop playing' },
+    // `dismiss: true` is the mirror: the client drops the summon as well as
+    // sending this, so the bot leaves even if it has crashed mid-track or
+    // ignores the verb it advertised. Same thing "Send away" does from the
+    // participant menu, reachable by typing.
+    { name: 'stop', description: 'Stop playing and leave', dismiss: true },
   ],
 });
 

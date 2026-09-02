@@ -147,6 +147,11 @@ bot is not in the roster there either. Call `bot.dismissSelf(channelId)` when
 you leave: it drops the summon and the media key together, so members stop
 seeing the bot listed as in the call.
 
+Mark the verb that means *leave* with `dismiss: true` — `/stop`, `/disconnect`.
+The client drops the summon as well as sending it, so a bot that has crashed
+mid-track still goes. It lands after the message, so you still get to edit your
+panel and say you stopped.
+
 A summon lets a bot **publish and nothing else**. Its token still carries
 `canSubscribe: false` unless an admin granted listening, and its media key is
 derived from the channel key rather than being it, so members hear the bot and
