@@ -2,6 +2,7 @@ import { signedPayload, sign } from './crypto.ts';
 import { BotError, type BotSession } from './session.ts';
 import { joinVoice, type VoiceConnection, type VoiceOptions } from './voice.ts';
 import { DirectMessages, type DirectMessage } from './dm.ts';
+import { ChannelReader, type ChannelMessage } from './channel.ts';
 
 /** One command, or one press, as the bot receives it. */
 export interface BotMessage {
@@ -74,6 +75,19 @@ export class Bot {
 
   #onDirectMessage: ((message: DirectMessage) => void | Promise<void>) | null = null;
 
+  /// Channels this bot was granted and is reading, by id, each with its own
+  /// cursor. A cursor per channel rather than one shared: they advance
+  /// independently, and one channel stalled on an unsealed rotation must not
+  /// hold up another.
+  readonly #watched = new Map<
+    string,
+    {
+      reader: ChannelReader;
+      lastSeen: number;
+      handler: (message: ChannelMessage) => void | Promise<void>;
+    }
+  >();
+
   constructor(session: BotSession, pollMs = 2000) {
     this.session = session;
     this.pollMs = pollMs;
@@ -90,6 +104,35 @@ export class Bot {
    */
   onDirectMessage(handler: (message: DirectMessage) => void | Promise<void>): void {
     this.#onDirectMessage = handler;
+  }
+
+  /**
+   * Read a channel this bot has been **granted** — BOTS.md §6, the one place a
+   * bot sees what it was not addressed.
+   *
+   * Call before {@link listen}. Returns the grant's `from_key_version`, or
+   * **null when this bot was never granted this channel** — which is worth
+   * checking, because an ungranted bot polls forever and receives nothing, and
+   * that looks exactly like a quiet channel. Nothing here can widen the grant:
+   * `messages_select` decides, so a bug in your handler cannot read a word more
+   * than an admin allowed.
+   *
+   * Reading starts from *now*, like {@link listen}. Scrollback before the grant
+   * is not readable at all — the keys for it were never sealed to this bot.
+   */
+  async watchChannel(
+    channelId: string,
+    handler: (message: ChannelMessage) => void | Promise<void>,
+  ): Promise<number | null> {
+    const reader = new ChannelReader(this.session, channelId);
+    const grantedFrom = await reader.grantedFrom();
+    if (grantedFrom === null) return null;
+    this.#watched.set(channelId, {
+      reader,
+      lastSeen: await reader.newestId(),
+      handler,
+    });
+    return grantedFrom;
   }
 
   /**
@@ -134,6 +177,28 @@ export class Bot {
    */
   replyPrivately(to: BotMessage, text: string): Promise<void> {
     return this.#post(to, text, to.senderId);
+  }
+
+  /**
+   * Say something in a channel that nobody asked for.
+   *
+   * The shape a watching bot needs: it noticed something rather than being
+   * addressed, so there is no message to reply to. In the clear like everything
+   * else a bot writes — signed but not sealed — so a member can always tell
+   * which half of the room a line came from, even in a channel this bot can
+   * read.
+   *
+   * Posting still needs `can_see_channel`, which a grant does not give: a bot
+   * granted a *private* channel can read it and cannot speak in it. Getting in
+   * far enough to speak is a role with `channel_role_access`, the same door a
+   * `/` command comes through.
+   */
+  async post(channelId: string, text: string): Promise<void> {
+    await this.session.insert('messages', {
+      channel_id: channelId,
+      ...this.#envelope(channelId, text),
+    });
+    await this.session.ringDoorbell(channelId);
   }
 
   /**
@@ -209,6 +274,17 @@ export class Bot {
         for (const dm of await this.dms.since(this.#lastDm)) {
           this.#lastDm = dm.id;
           await handler(dm);
+        }
+      }
+
+      for (const watch of this.#watched.values()) {
+        // Advanced by what came back, not by the newest row on the server:
+        // `since` stops at a message whose key has not been sealed for this bot
+        // yet, and jumping the cursor past it would drop that stretch of the
+        // conversation for good. Standing still is the recoverable failure.
+        for (const message of await watch.reader.since(watch.lastSeen)) {
+          watch.lastSeen = message.id;
+          await watch.handler(message);
         }
       }
     } catch (error) {

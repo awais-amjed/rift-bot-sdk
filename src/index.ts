@@ -16,6 +16,8 @@ export {
   FRAME_SAMPLES,
   audioFrames,
 } from './audio_frames.ts';
+export { ChannelReader, type ChannelMessage } from './channel.ts';
+export { open, SenderKeys } from './verify.ts';
 export {
   deriveChatIdentity,
   unwrapKey,

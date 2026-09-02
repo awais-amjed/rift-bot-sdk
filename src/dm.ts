@@ -1,8 +1,9 @@
-import { createCipheriv, createDecipheriv, createHmac, diffieHellman, randomBytes } from 'node:crypto';
+import { createCipheriv, createHmac, diffieHellman, randomBytes } from 'node:crypto';
 
 import { conversationContext, sign, signedPayload, verifySignature } from './crypto.ts';
 import { x25519PublicFrom, type ChatIdentity } from './sealed.ts';
 import { BotError, type BotSession } from './session.ts';
+import { open, SenderKeys } from './verify.ts';
 
 /**
  * Direct messages to a bot.
@@ -32,16 +33,6 @@ function seal(plaintext: string, key: Buffer): { ciphertext: string; nonce: stri
     ciphertext: Buffer.concat([body, cipher.getAuthTag()]).toString('base64'),
     nonce: nonce.toString('base64'),
   };
-}
-
-function open(ciphertext: string, nonce: string, key: Buffer): string {
-  const sealed = Buffer.from(ciphertext, 'base64');
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(nonce, 'base64'));
-  decipher.setAuthTag(sealed.subarray(sealed.length - 16));
-  return Buffer.concat([
-    decipher.update(sealed.subarray(0, sealed.length - 16)),
-    decipher.final(),
-  ]).toString('utf8');
 }
 
 /**
@@ -118,10 +109,11 @@ export class DirectMessages {
   /** Conversation keys, by peer id. Derived once; they never change. */
   readonly #keys = new Map<string, Buffer>();
   /** Ed25519 public keys, for checking who really wrote a row. */
-  readonly #senderKeys = new Map<string, Buffer>();
+  readonly #senders: SenderKeys;
 
   constructor(session: BotSession) {
     this.session = session;
+    this.#senders = new SenderKeys(session);
   }
 
   /** Everything sent to this bot after [afterId], oldest first. */
@@ -182,7 +174,7 @@ export class DirectMessages {
       const contextId = conversationContext(row.sender_id, row.recipient_id);
       const payload = signedPayload(contextId, row.key_version, row.nonce, row.ciphertext);
 
-      const senderKey = await this.#senderKeyFor(row.sender_id);
+      const senderKey = await this.#senders.publicKeyFor(row.sender_id);
       if (!senderKey || !row.signature) return null;
       if (!verifySignature(payload, row.signature, senderKey)) return null;
 
@@ -215,17 +207,4 @@ export class DirectMessages {
     return key;
   }
 
-  async #senderKeyFor(peerId: string): Promise<Buffer | null> {
-    const cached = this.#senderKeys.get(peerId);
-    if (cached) return cached;
-
-    const rows = await this.session.select<{ public_key: string | null }>(
-      `users?select=public_key&id=eq.${peerId}`,
-    );
-    const key = rows[0]?.public_key;
-    if (!key) return null;
-    const bytes = Buffer.from(key, 'base64');
-    this.#senderKeys.set(peerId, bytes);
-    return bytes;
-  }
 }

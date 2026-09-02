@@ -76,10 +76,14 @@ is sitting in either** — see Voice.
 That is not this package being careful. It is `messages_select`:
 
 ```sql
-AND (NOT app.is_bot() OR to_bot = auth.uid() OR sender_id = auth.uid())
+AND (NOT app.is_bot()
+     OR to_bot = auth.uid()
+     OR sender_id = auth.uid()
+     OR app.bot_reads_version(channel_id, key_version))
 ```
 
-A bug in your bot cannot widen it, and neither can a bug in this SDK.
+A bug in your bot cannot widen it, and neither can a bug in this SDK. The
+fourth line is the moderation grant, below.
 
 The reason is that Rift channels are end-to-end encrypted and a bot can never
 hold a channel key — a wrapped key *is* read access, it is arithmetic rather
@@ -89,6 +93,36 @@ one, and the database refuses to record one for it even if every client asked.
 The exception is a **moderation grant**: an admin can hand one bot the key to
 one channel, from the next key version onward. The channel says so to everyone
 in it for as long as it lasts.
+
+```ts
+const from = await bot.watchChannel(channelId, async (message) => {
+  console.log(`${message.senderId}: ${message.text}`);
+});
+if (from === null) throw new Error('this bot was never granted that channel');
+```
+
+Call it before `listen`. **Check for null** — an ungranted bot polls forever and
+receives nothing, which looks exactly like a quiet channel.
+
+Three things it does that are easy to get wrong by hand:
+
+- **Every signature is checked** before a message reaches your handler. A bot
+  acting on a row that is not from who it claims is the whole attack.
+- **It stops rather than skips** at a message whose key has not been sealed for
+  this bot yet. A rotation is sealed by the next member to open the channel, so
+  a version can exist for a moment before its key does — and a cursor that
+  jumped that gap would drop exactly the stretch you were granted to see.
+- **Nothing arrives from before the grant.** Not a policy you have to trust: the
+  keys for it were never sealed to this bot.
+
+Also absent: `key_version` 0 rows (webhook posts, system notices, commands to
+other bots — never sealed, so no grant covers them), somebody else's ephemeral
+reply, and another bot's button press.
+
+A granted **private** channel is readable but not speakable: posting needs
+`can_see_channel`, which a grant does not give. A role with
+`channel_role_access` is what gets a bot in far enough to talk — the same door a
+`/` command comes through.
 
 ## Replying
 
@@ -255,4 +289,7 @@ which is what keeps "a URL" an `ffmpeg` flag rather than a dependency tree.
   is fixed upstream, a bot that was speaking when a rotation happened goes
   inaudible: leave and `joinVoice` again, which fetches the new key.
 - **Attachments.** A bot's reply is text or a panel, in a channel or a DM.
+- **Speaking in a private channel it only *reads*.** A grant is read access; a
+  seat is what lets a bot post. Give it a role with `channel_role_access` if it
+  needs to answer in there.
 
