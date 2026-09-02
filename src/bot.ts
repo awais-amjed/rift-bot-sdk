@@ -223,6 +223,47 @@ export class Bot {
   }
 
   /**
+   * The voice channels this bot has been summoned to, newest first.
+   *
+   * How a bot answers `/play` with somewhere to go. It cannot see a voice
+   * channel it was not asked into — a summon is permission to publish there,
+   * not membership — so this row is the only way it learns the id.
+   *
+   * A member's client writes one when they send a command the bot's manifest
+   * marked `voice: true`, so the usual shape is: take the command, read this,
+   * `joinVoice` the newest one. Empty means nobody has asked, which for a
+   * command that needs a call is worth saying rather than failing silently.
+   */
+  async summons(): Promise<{ channelId: string; summonedBy: string | null }[]> {
+    const rows = await this.session.select<{
+      channel_id: string;
+      summoned_by: string | null;
+    }>(
+      `bot_voice_summons?select=channel_id,summoned_by&bot_id=eq.${this.session.userId}` +
+        '&order=summoned_at.desc',
+    );
+    return rows.map((r) => ({
+      channelId: r.channel_id,
+      summonedBy: r.summoned_by,
+    }));
+  }
+
+  /**
+   * Leave, and give back the welcome.
+   *
+   * Dropping the summon drops the media key with it, so a bot that stops
+   * playing stops being able to arrive. Worth calling rather than just
+   * disconnecting: the row is what members see as "this is in the call", and
+   * one left behind is a bot that looks present and is not.
+   */
+  async dismissSelf(channelId: string): Promise<void> {
+    await this.session.rpc('dismiss_bot_from_voice', {
+      p_bot: this.session.userId,
+      p_channel: channelId,
+    });
+  }
+
+  /**
    * Join a voice channel, and get something to publish audio through.
    *
    * **The bot publishes; it does not hear.** Its token is minted with

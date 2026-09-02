@@ -195,6 +195,24 @@ export class BotSession {
     return (await res.json()) as T[];
   }
 
+  /**
+   * Call a database function.
+   *
+   * Distinct from {@link callFunction}, which reaches an edge function: this
+   * one is PostgREST, so the permission check happens inside the database and
+   * this bot's JWT is what it is made against.
+   */
+  async rpc<T = unknown>(name: string, params: Record<string, unknown>): Promise<T> {
+    const res = await fetch(`${this.url}/rest/v1/rpc/${name}`, {
+      method: 'POST',
+      headers: this.#headers(),
+      body: JSON.stringify(params),
+    });
+    await this.#throwIfFailed(res);
+    const text = await res.text();
+    return (text ? JSON.parse(text) : null) as T;
+  }
+
   async patch(query: string, body: Record<string, unknown>): Promise<void> {
     const res = await fetch(`${this.url}/rest/v1/${query}`, {
       method: 'PATCH',

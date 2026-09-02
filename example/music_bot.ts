@@ -61,8 +61,21 @@ function decode(source: string): ChildProcessWithoutNullStreams {
   ]);
 }
 
-/** Which voice channel somebody is in, from the roster LiveKit answers. */
+/**
+ * Where to play — the summon first, the roster second.
+ *
+ * A summon is written by the caller's own client when they send a command this
+ * bot's manifest marked `voice: true`, and it is the only source that works for
+ * a **private** voice channel: a bot cannot see one, so it is not in the roster
+ * either. The roster is the fallback for a bot with no manifest, or a caller
+ * whose client is older than summoning.
+ */
 async function voiceChannelOf(userId: string): Promise<string | null> {
+  const summoned = await bot.summons();
+  if (summoned.length > 0) {
+    const mine = summoned.find((s) => s.summonedBy === userId);
+    if (mine) return mine.channelId;
+  }
   const data = await session.callFunction('voice_roster', {});
   return (data.roster as Record<string, string>)[userId] ?? null;
 }
@@ -73,6 +86,10 @@ async function stop(channelId: string): Promise<void> {
   playing.delete(channelId);
   current.ffmpeg.kill('SIGKILL');
   await current.voice.leave();
+  // Give the welcome back with the connection. Dropping the summon drops the
+  // media key too, so the bot stops being able to arrive rather than merely
+  // stopping — and members stop seeing it listed as in the call.
+  await bot.dismissSelf(channelId);
   if (current.panelId !== null) {
     await bot.editPanel(current.textChannel, current.panelId, [
       { type: 'heading', text: 'Stopped' },
@@ -137,6 +154,19 @@ await bot.listen(async (message) => {
       return;
     }
   }
+});
+
+// `voice: true` is what tells a member's client to summon this bot into their
+// call when they type `/play` — without it the command still arrives and the
+// bot has nowhere to go, which in a private voice channel it cannot discover
+// any other way. `/stop` does not carry it: it is about a call the bot is
+// already in.
+await session.publishManifest({
+  description: 'Plays a URL in your voice channel.',
+  commands: [
+    { name: 'play', description: 'Play something', usage: '<url>', voice: true },
+    { name: 'stop', description: 'Stop playing' },
+  ],
 });
 
 console.log('playing. ctrl-c to stop.');

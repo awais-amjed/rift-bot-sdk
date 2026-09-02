@@ -124,6 +124,34 @@ A granted **private** channel is readable but not speakable: posting needs
 `channel_role_access` is what gets a bot in far enough to talk — the same door a
 `/` command comes through.
 
+## Being summoned into a call
+
+A bot cannot see a voice channel it was not asked into, so `/play` needs
+somewhere to go. Mark the command in your manifest and a member's client writes
+the summon when they send it from inside a call:
+
+```ts
+await session.publishManifest({
+  commands: [
+    { name: 'play', description: 'Play something', usage: '<url>', voice: true },
+    { name: 'stop', description: 'Stop playing' },
+  ],
+});
+
+const [summon] = await bot.summons();          // newest first
+if (summon) await bot.joinVoice(summon.channelId);
+```
+
+`summons()` is the only source that works for a **private** voice channel — the
+bot is not in the roster there either. Call `bot.dismissSelf(channelId)` when
+you leave: it drops the summon and the media key together, so members stop
+seeing the bot listed as in the call.
+
+A summon lets a bot **publish and nothing else**. Its token still carries
+`canSubscribe: false` unless an admin granted listening, and its media key is
+derived from the channel key rather than being it, so members hear the bot and
+the bot hears nobody.
+
 ## Replying
 
 | Call | Who sees it | For |
