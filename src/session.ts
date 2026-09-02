@@ -3,7 +3,25 @@ import { deriveChatIdentity, type ChatIdentity } from './sealed.ts';
 import { parseInvite } from './invite.ts';
 
 /** Anything the server refused. */
-export class BotError extends Error {}
+export class BotError extends Error {
+  /**
+   * The HTTP status, when there was one.
+   *
+   * Here because the polling loop has to tell two failures apart that used to
+   * look identical: a session that expired an hour after it was minted, which
+   * is recovered by signing again and is nobody's business, and a request the
+   * server refused on its merits — a bot with no media key for a call, a
+   * command it may not send. Treating the second as the first meant logging in
+   * and carrying on in silence, so a bot that could not do the thing it was
+   * asked reported nothing at all and looked like a bot nobody had asked.
+   */
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 /**
  * A bot's connection to one self-hosted Rift server.
@@ -264,7 +282,7 @@ export class BotSession {
     });
     const json = (await res.json()) as Record<string, unknown>;
     if (json.success !== true) {
-      throw new BotError(`${name} failed: ${json.error ?? res.status}`);
+      throw new BotError(`${name} failed: ${json.error ?? res.status}`, res.status);
     }
     return json.data as Record<string, unknown>;
   }
@@ -279,7 +297,7 @@ export class BotSession {
 
   async #throwIfFailed(res: Response): Promise<void> {
     if (res.ok) return;
-    throw new BotError(`${res.status}: ${await res.text()}`);
+    throw new BotError(`${res.status}: ${await res.text()}`, res.status);
   }
 }
 

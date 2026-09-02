@@ -75,6 +75,8 @@ export class Bot {
 
   #onDirectMessage: ((message: DirectMessage) => void | Promise<void>) | null = null;
 
+  #onError: ((error: BotError) => void) | null = null;
+
   /// Channels this bot was granted and is reading, by id, each with its own
   /// cursor. A cursor per channel rather than one shared: they advance
   /// independently, and one channel stalled on an unsealed rotation must not
@@ -133,6 +135,25 @@ export class Bot {
       handler,
     });
     return grantedFrom;
+  }
+
+  /**
+   * Hear about a tick that failed on its merits — not an expired session, which
+   * is recovered silently and is nobody's business.
+   *
+   * Without a handler these go to `console.error`, because the alternative is
+   * what this replaced: nothing at all.
+   */
+  onError(handler: (error: BotError) => void): void {
+    this.#onError = handler;
+  }
+
+  #reportError(error: BotError): void {
+    if (this.#onError) {
+      this.#onError(error);
+      return;
+    }
+    console.error(`[rift] ${error.message}`);
   }
 
   /**
@@ -330,11 +351,27 @@ export class Bot {
       }
     } catch (error) {
       if (!(error instanceof BotError)) throw error;
+
       // A session expires an hour after it is minted, and the only recovery is
       // the one that needs no state: sign again with the key the seed derives.
-      // Swallowing the tick is right — the next one retries, and the commands
-      // are still in the database waiting.
-      await this.session.login();
+      // Swallowing *that* tick is right — the next one retries, and the
+      // commands are still in the database waiting.
+      //
+      // 401 and nothing else. Not 403, which is RLS refusing on the merits and
+      // will refuse again after a fresh login; and **not** a `BotError` with no
+      // status, which is this SDK's own — "no media key for this channel yet"
+      // is the one a summoned bot hits, and sending it round the login path is
+      // how it stayed invisible.
+      if (error.status === 401) {
+        await this.session.login();
+        return;
+      }
+
+      // Everything else is a refusal worth hearing about. It used to go down
+      // the same path, so the bot logged in again and carried on in silence —
+      // and a bot that could not do the thing it was asked looked exactly like
+      // a bot nobody had asked. Found by summoning one into an empty call.
+      this.#reportError(error);
     } finally {
       this.#draining = false;
     }
