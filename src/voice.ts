@@ -33,6 +33,12 @@ import {
  * install a WebRTC stack it never loads, and most bots are that bot.
  */
 
+/**
+ * The ring slot a bot's media always occupies — see the note in `joinVoice`.
+ * Members read a bot's key from here rather than from its version's slot.
+ */
+export const BOT_KEY_INDEX = 0;
+
 /** Just enough of rtc-node's E2EE manager to put a key in the right slot. */
 interface RtcE2EEManager {
   keyProvider?: { setSharedKey(key: Uint8Array, keyIndex: number): void };
@@ -198,12 +204,21 @@ export async function joinVoice(
   // per-participant mode, which is what lets them hold a different key for the
   // bot than for each other.
   //
-  // The slot has to match. Rift addresses keys by channel key *version*, mapped
-  // onto LiveKit's ring as `version % 16`; encrypting into slot 0 while the
-  // room reads slot 1 is a bot that connects, publishes, and is silent, with
-  // nothing anywhere reporting an error.
+  // **A bot always encrypts in slot 0**, whatever version its key is, and that
+  // is not a choice — it is what this SDK is able to do. A frame cryptor is
+  // created when its track is published and keeps the index it was born with;
+  // moving it needs `FrameCryptor.setKeyIndex`, which throws in
+  // `@livekit/rtc-node` because the FFI request it builds omits a `track_sid`
+  // the native side requires. Trying and failing is worse than not trying: it
+  // leaves the bot inaudible with a stack trace instead of a rule.
+  //
+  // So the rule is the slot, and Rift's clients read a bot's key from 0 for
+  // exactly this reason (`livekit_e2ee.dart`). Slot 0 is where `connect` put it
+  // via `keyProviderOptions.sharedKey`; this is the same key again, said out
+  // loud, so the agreement is written down in both places rather than resting
+  // on a default.
   const manager = (room as unknown as { e2eeManager?: RtcE2EEManager }).e2eeManager;
-  manager?.keyProvider?.setSharedKey(media.key, media.keyIndex);
+  manager?.keyProvider?.setSharedKey(media.key, BOT_KEY_INDEX);
 
   return new VoiceConnection(channelId, grantAllowsSubscribe(token), rtc, room, media.keyIndex);
 }
