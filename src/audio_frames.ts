@@ -66,12 +66,22 @@ export async function* audioFrames(
 
     let offset = 0;
     while (buffer.length - offset >= FRAME_BYTES) {
-      // Copied rather than viewed: `subarray` shares the chunk's memory, and a
-      // frame outlives this iteration inside LiveKit's queue.
-      const bytes = buffer.slice(offset, offset + FRAME_BYTES);
-      yield new Int16Array(bytes.buffer, bytes.byteOffset, FRAME_SAMPLES * CHANNELS);
+      // Copied rather than viewed, and copied the long way round on purpose.
+      //
+      // A frame outlives this iteration inside LiveKit's queue, so it must not
+      // alias the chunk. `buffer.slice` looks like the copy and is not one when
+      // `buffer` is a Node `Buffer` — there `slice` is an alias of `subarray`,
+      // which shares memory — and a Buffer is exactly what a stream yields.
+      //
+      // The copy also fixes the alignment. `new Int16Array(ab, byteOffset, …)`
+      // throws when `byteOffset` is odd, and a pooled Buffer's offset is
+      // whatever the pool handed out.
+      const bytes = new Uint8Array(buffer.subarray(offset, offset + FRAME_BYTES));
+      yield new Int16Array(bytes.buffer, 0, FRAME_SAMPLES * CHANNELS);
       offset += FRAME_BYTES;
     }
-    carry = buffer.slice(offset);
+    // Copied for the same reason: the carry is read on the *next* chunk, by
+    // which time this one may be gone.
+    carry = new Uint8Array(buffer.subarray(offset));
   }
 }

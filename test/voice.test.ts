@@ -79,6 +79,39 @@ test('a trailing partial frame is dropped, not padded', async () => {
   assert.equal(frames.length, 1);
 });
 
+test('a frame does not alias the chunk it came from', async () => {
+  // The helper above yields `Uint8Array`, whose `slice` copies. A real pipe
+  // yields a Node `Buffer`, whose `slice` is an alias of `subarray` and shares
+  // memory — so this is the shape that catches it, and the one every caller
+  // actually passes. A frame sits in LiveKit's queue long after the chunk it
+  // came from has been reused, and an aliased frame plays whatever landed
+  // there next.
+  const chunk = Buffer.alloc(FRAME_BYTES);
+  chunk.fill(0x11);
+
+  async function* one() {
+    yield chunk;
+  }
+  const [frame] = await collect(audioFrames(one()));
+
+  chunk.fill(0x77);
+  assert.equal(frame[0], 0x1111, 'the frame changed when the chunk was reused');
+});
+
+test('an unaligned buffer is still cut into frames', async () => {
+  // `new Int16Array(ab, byteOffset, …)` throws outright when the offset is odd,
+  // and a Buffer handed out of Node's pool carries whatever offset the pool
+  // had. Failing here would be an exception mid-track rather than a click.
+  const backing = Buffer.alloc(FRAME_BYTES * 2 + 1);
+  const odd = backing.subarray(1, 1 + FRAME_BYTES * 2);
+  assert.equal(odd.byteOffset % 2, 1, 'the fixture must actually be misaligned');
+
+  async function* one() {
+    yield odd;
+  }
+  assert.equal((await collect(audioFrames(one()))).length, 2);
+});
+
 test('stopping ends the stream at the next chunk', async () => {
   let going = true;
   const stream = audioFrames(chunks(FRAME_BYTES, FRAME_BYTES, FRAME_BYTES), () => going);
