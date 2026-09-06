@@ -154,7 +154,7 @@ The bot redraws by writing `blocks` again on the same row and ringing
 `message_changed` with its id. Ringing `new_message` makes clients fetch what is
 *newer* than they have, and a redraw is not newer than anything.
 
-`image` is deliberately absent from v1 — see BOTS.md §13 item 8.
+`image` is deliberately absent from v1 — see BOTS.md §5.
 
 ---
 
@@ -235,7 +235,7 @@ when its track is published and keeps the index it was born with; moving it
 needs `FrameCryptor.setKeyIndex`, which throws in `@livekit/rtc-node` because
 the request it builds omits a `track_sid` the native side requires. So the rule
 is the slot, and members read a bot's key from 0 for exactly this reason
-(`livekit_e2ee.dart`, `bot_sdk_ts/src/voice.ts`).
+(`livekit_e2ee.dart` in the app, `src/voice.ts` in the SDK).
 
 A port that applied the arithmetic above to a bot's key would put it in slot 1
 on a channel at version 1 and the bot would be inaudible — which is the failure

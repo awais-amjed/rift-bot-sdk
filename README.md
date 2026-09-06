@@ -212,7 +212,7 @@ DM key, and opens a blob it sealed. Neither codebase reads the other; they meet
 at one JSON file, which is the only arrangement in which "they agree" means
 anything.
 
-There was a Dart bot SDK too, and it is gone (BOTS.md §11) — it could never
+There was a Dart bot SDK too, and it is gone (BOTS.md §10) — it could never
 publish audio, and it fell a feature behind every time this one gained something.
 The second implementation that matters is the app itself, and it is still there.
 
