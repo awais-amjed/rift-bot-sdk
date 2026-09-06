@@ -3,7 +3,6 @@ import { unwrapKey, type Wrapped } from './sealed.ts';
 import {
   CHANNELS,
   FRAME_SAMPLES,
-  KEY_RING_SIZE,
   SAMPLE_RATE,
   audioFrames,
 } from './audio_frames.ts';
@@ -99,7 +98,14 @@ export class VoiceConnection {
   #source: RtcAudioSource | null = null;
   #playing = false;
 
-  /** Which slot in LiveKit's key ring this call's key occupies. */
+  /**
+   * Which slot in LiveKit's key ring this bot's key occupies.
+   *
+   * Always {@link BOT_KEY_INDEX}, never `keyVersion % KEY_RING_SIZE` — see the
+   * note in {@link joinVoice}. It used to report the version's slot, which is
+   * where a *member's* key goes and is not where this one is, so anybody who
+   * trusted it was reading a number the frame cryptor disagreed with.
+   */
   readonly keyIndex: number;
 
   constructor(
@@ -224,7 +230,13 @@ export async function joinVoice(
   const manager = (room as unknown as { e2eeManager?: RtcE2EEManager }).e2eeManager;
   manager?.keyProvider?.setSharedKey(media.key, BOT_KEY_INDEX);
 
-  return new VoiceConnection(channelId, grantAllowsSubscribe(token), rtc, room, media.keyIndex);
+  return new VoiceConnection(
+    channelId,
+    grantAllowsSubscribe(token),
+    rtc,
+    room,
+    BOT_KEY_INDEX,
+  );
 }
 
 /**
@@ -239,7 +251,7 @@ export async function joinVoice(
 async function mediaKey(
   session: BotSession,
   channelId: string,
-): Promise<{ key: Buffer; keyIndex: number }> {
+): Promise<{ key: Buffer; keyVersion: number }> {
   const data = await session.callFunction('get_channel_key', {
     channel_id: channelId,
   });
@@ -253,7 +265,7 @@ async function mediaKey(
 
   return {
     key: unwrapKey(session.chatIdentity, sealed),
-    keyIndex: sealed.key_version % KEY_RING_SIZE,
+    keyVersion: sealed.key_version,
   };
 }
 
