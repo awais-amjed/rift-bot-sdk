@@ -115,9 +115,10 @@ async function stopPlaying(channelId: string): Promise<void> {
  * should tidy up after itself rather than wait to be removed.
  */
 async function disconnect(channelId: string): Promise<void> {
-  const current = playing.get(channelId);
   await stopPlaying(channelId);
-  await current?.voice.leave();
+  // One `leave` for one connection. `playing` and `connections` hold the same
+  // object in every path that reaches here, and leaving it twice disconnected a
+  // room that was already gone.
   await connections.get(channelId)?.leave();
   connections.delete(channelId);
   await bot.dismissSelf(channelId);

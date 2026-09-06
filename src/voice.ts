@@ -134,12 +134,16 @@ export class VoiceConnection {
     const source = new this.#rtc.AudioSource(SAMPLE_RATE, CHANNELS);
     this.#source = source;
 
-    const track = this.#rtc.LocalAudioTrack.createAudioTrack('audio', source);
-    const options = new this.#rtc.TrackPublishOptions();
-    options.source = this.#rtc.TrackSource.SOURCE_MICROPHONE;
-    await this.#room.localParticipant?.publishTrack(track, options);
-
+    // Inside the try, not before it: publishing can fail, and when it did the
+    // `finally` had not been entered yet, so `#playing` stayed true forever and
+    // every later `play()` on this connection threw "already playing" — a bot
+    // that lost one track went quiet for good.
     try {
+      const track = this.#rtc.LocalAudioTrack.createAudioTrack('audio', source);
+      const options = new this.#rtc.TrackPublishOptions();
+      options.source = this.#rtc.TrackSource.SOURCE_MICROPHONE;
+      await this.#room.localParticipant?.publishTrack(track, options);
+
       for await (const samples of audioFrames(pcm, () => this.#playing)) {
         await source.captureFrame(
           new this.#rtc.AudioFrame(samples, SAMPLE_RATE, CHANNELS, FRAME_SAMPLES),
