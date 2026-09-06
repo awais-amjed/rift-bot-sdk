@@ -28,7 +28,12 @@ import { deriveChatIdentity, unwrapKey } from '../src/sealed.ts';
  * renders as nothing: the bot watches it send and nobody ever sees it. That
  * failure is invisible in both codebases and obvious here.
  */
-const vectors = JSON.parse(readFileSync(new URL('../../test/wire_vectors.json', import.meta.url), 'utf8'));
+// Vendored from the app repo, where `tool/gen_wire_vectors.dart` generates it
+// from `rift_crypto` — the reference implementation. That generator writes this
+// copy too, so the two cannot be refreshed apart; see README.md, "The contract".
+const vectors = JSON.parse(
+  readFileSync(new URL('./wire_vectors.json', import.meta.url), 'utf8'),
+);
 const seed = Buffer.from(vectors.seed_base64, 'base64');
 
 test('the key ladder: HMAC over the domain strings', () => {

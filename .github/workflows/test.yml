@@ -1,0 +1,23 @@
+# The wire tests are the reason this runs on every push.
+#
+# They check this package against `test/wire_vectors.json`, which is generated
+# from the Dart reference implementation — so a green run here is the only
+# standing evidence that the two implementations still agree. Everything else
+# in the suite is ordinary unit testing and cheap to run alongside it.
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 22 strips TypeScript itself, which is why this package has no build
+          # step and no compiler in its dependencies.
+          node-version: '22'
+      - run: npm test

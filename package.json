@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "description": "Write a Rift bot. Auth, commands, replies, panels and voice against a self-hosted server.",
   "type": "module",
-  "private": true,
   "exports": "./src/index.ts",
   "engines": {
     "node": ">=22"
