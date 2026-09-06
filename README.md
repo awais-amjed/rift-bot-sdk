@@ -324,7 +324,7 @@ npm install @livekit/rtc-node   # in *your* bot's package
 ```
 
 Inside this repo it is already a devDependency, because the examples need it —
-`npm install` in `bot_sdk_ts/` is enough to run `music_bot.ts`. (Running
+a plain `npm install` is enough to run `music_bot.ts`. (Running
 `npm install @livekit/rtc-node` *here* does nothing: npm will not install a
 package the root declares as an optional peer of itself.)
 
@@ -353,3 +353,14 @@ which is what keeps "a URL" an `ffmpeg` flag rather than a dependency tree.
   seat is what lets a bot post. Give it a role with `channel_role_access` if it
   needs to answer in there.
 
+## Where this sits
+
+Rift is five repositories, meant to be cloned as siblings.
+
+| Repo | Holds |
+|---|---|
+| `rift` | the client: Flutter app, Rust crate, `rift_crypto` |
+| `rift-self-host` | a server's schema, endpoints and console — anyone runs one |
+| `rift-central` | accounts, the public directory, the push relay — we run it |
+| `rift-bot-sdk` | the TypeScript bot SDK |
+| `rift-website` | joinrift.app, and the self-hosting docs |
