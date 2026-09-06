@@ -126,6 +126,14 @@ export class Bot {
     channelId: string,
     handler: (message: ChannelMessage) => void | Promise<void>,
   ): Promise<number | null> {
+    // Called *before* `listen`, which is where the login normally happens — so
+    // without this the grant lookup runs as nobody: `session.userId` is null,
+    // the query asks for `bot_id=eq.null`, and the request carries
+    // `Bearer null`. That came back 401 and threw out of a method documented to
+    // answer "were you granted this?", so `example/watch_bot.ts` could not run
+    // at all. Logging in is cheap, idempotent and derives from the seed.
+    if (this.session.userId === null) await this.session.login();
+
     const reader = new ChannelReader(this.session, channelId);
     const grantedFrom = await reader.grantedFrom();
     if (grantedFrom === null) return null;
