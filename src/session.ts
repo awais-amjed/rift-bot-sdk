@@ -76,6 +76,15 @@ export class BotSession {
     });
   }
 
+  /**
+   * The JWT this session signs its requests with, or null before the first
+   * {@link login}. For a listener that has to carry the same one, and be
+   * given the next: see `RealtimeListener.setToken`.
+   */
+  get token(): string | null {
+    return this.#token;
+  }
+
   /** The anon key this session reads tables with. Save it — see {@link join}. */
   get anonKey(): string {
     return this.#anonKey;
@@ -238,37 +247,6 @@ export class BotSession {
       body: JSON.stringify(body),
     });
     await this.#throwIfFailed(res);
-  }
-
-  /**
-   * Tell anyone with the channel open that something happened.
-   *
-   * `new_message` makes a client fetch what is *newer* than it has. A panel
-   * being redrawn is not newer than anything, so an edit rings `message_changed`
-   * with the row's id instead — ringing the wrong one leaves the panel showing
-   * the state it had when the channel was opened, which for the one feature
-   * whose point is changing in place is the failure that looks like it working.
-   *
-   * Best-effort, and never allowed to fail what it announces: the row is
-   * already written, every client re-reads on open, and a bot that threw
-   * because a doorbell did not ring would retry and answer twice.
-   */
-  async ringDoorbell(
-    channelId: string,
-    event = 'new_message',
-    payload: Record<string, unknown> = {},
-  ): Promise<void> {
-    try {
-      await fetch(`${this.url}/realtime/v1/api/broadcast`, {
-        method: 'POST',
-        headers: this.#headers(),
-        body: JSON.stringify({
-          messages: [{ topic: `chat:${channelId}`, event, payload }],
-        }),
-      });
-    } catch {
-      // Deliberately swallowed. See above.
-    }
   }
 
   async callFunction(name: string, body: unknown): Promise<Record<string, unknown>> {

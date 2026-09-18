@@ -331,13 +331,28 @@ package the root declares as an optional peer of itself.)
 Decoding is yours. This package publishes PCM and has no opinion about codecs,
 which is what keeps "a URL" an `ffmpeg` flag rather than a dependency tree.
 
+## How a bot hears the server
+
+`listen` holds one connection to the server's Realtime and joins the bot's own
+topic, `user:<bot id>`, which nobody else may join. The database announces what
+the bot may hear there: a message addressed to it, a button press, a DM, and
+anything written in a channel it has been **granted**. Nothing else reaches it,
+and what does is only ids — every read still goes through the same queries and
+the same policies, so a broadcast can never widen what a bot sees.
+
+A slow poll runs behind that, every 30 seconds by default (`pollMs`), and it is
+the backstop rather than the delivery: a broadcast is best-effort, and a bot
+that missed one and waited for the next would have stopped working without
+saying so. `new Bot(session, 2000, { realtime: false })` goes back to polling
+alone.
+
+Replies, panels and DMs need no announcement of their own — the database makes
+it when the row is written, which is also why a bot's answers now appear for
+members who have the channel open even when the bot writes them through the
+REST API.
+
 ## What this package does not do yet
 
-- **Realtime for *reading*.** `listen` polls, every two seconds by default.
-  Replies and panel redraws do ring the channel's doorbell, so they appear at
-  once for anyone with the channel open. Polling has no reconnect logic to get
-  wrong and spends nothing from the server's shared event budget (~100/second,
-  which every member's unread badges also draw on).
 - **Hearing a call.** The grant exists and the token honours it, but this
   package has no `onAudio`: a granted bot connects and subscribes, and reading
   the frames is `@livekit/rtc-node`'s API directly for now.

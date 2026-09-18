@@ -156,7 +156,6 @@ export class DirectMessages {
         this.session.identity.privateKey,
       ),
     });
-    await this.session.ringDoorbell(`dm:${to.peerId}`);
   }
 
   /**

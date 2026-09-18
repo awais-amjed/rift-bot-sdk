@@ -17,6 +17,11 @@ export {
   audioFrames,
 } from './audio_frames.ts';
 export { ChannelReader, type ChannelMessage } from './channel.ts';
+export {
+  RealtimeListener,
+  type RealtimeEvent,
+  type RealtimeOptions,
+} from './realtime.ts';
 export { open, SenderKeys } from './verify.ts';
 export {
   deriveChatIdentity,

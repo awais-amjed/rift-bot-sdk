@@ -2,6 +2,7 @@ import { signedPayload, sign } from './crypto.ts';
 import { BotError, type BotSession } from './session.ts';
 import { joinVoice, type VoiceConnection, type VoiceOptions } from './voice.ts';
 import { DirectMessages, type DirectMessage } from './dm.ts';
+import { RealtimeListener } from './realtime.ts';
 import { ChannelReader, type ChannelMessage } from './channel.ts';
 
 /** One command, or one press, as the bot receives it. */
@@ -53,7 +54,18 @@ export type PanelBlock = Record<string, unknown>;
  */
 export class Bot {
   readonly session: BotSession;
+
+  /// How often the backstop poll runs. Not the way messages normally arrive —
+  /// see [listen] — which is why it is half a minute rather than two seconds.
   readonly pollMs: number;
+
+  /// Null when [listen] was told not to use Realtime.
+  #realtime: RealtimeListener | null = null;
+  readonly #useRealtime: boolean;
+
+  /// Set while a drain is queued from a broadcast, so a burst of them — a
+  /// message, its reaction, an edit — costs one pass rather than one each.
+  #queued: ReturnType<typeof setTimeout> | null = null;
 
   #lastSeen = 0;
   #lastDm = 0;
@@ -90,9 +102,16 @@ export class Bot {
     }
   >();
 
-  constructor(session: BotSession, pollMs = 2000) {
+  /**
+   * [pollMs] is the backstop, not the delivery: with Realtime on, a message
+   * arrives when the database announces it, and the poll is what catches
+   * anything a dropped frame lost. Pass `{ realtime: false }` to go back to
+   * polling alone, and then a short [pollMs] is what you want again.
+   */
+  constructor(session: BotSession, pollMs = 30_000, options: { realtime?: boolean } = {}) {
     this.session = session;
     this.pollMs = pollMs;
+    this.#useRealtime = options.realtime ?? true;
     this.dms = new DirectMessages(session);
   }
 
@@ -170,11 +189,15 @@ export class Bot {
    * Starts from *now*: a bot restarting does not replay a backlog of commands
    * people gave up on minutes ago and act on all of them at once.
    *
-   * Polling rather than Realtime, deliberately, for the first version: no
-   * reconnect logic to get wrong, and nothing spent from the server's shared
-   * event budget (~100/second, which every member's unread badges draw on too).
-   * Replies and panel redraws still ring the doorbell, so an answer appears at
-   * once for anyone with the channel open.
+   * The database announces what this bot may hear on its own topic (migrations
+   * 017 and 018) and this listens there: a message addressed to it, a button
+   * press, a DM, and anything written in a channel it has been granted. What
+   * arrives is ids, so every read still goes through the same queries and the
+   * same policies — a broadcast cannot widen what a bot sees.
+   *
+   * The poll stays behind it, slowly. A broadcast is best-effort by design,
+   * and a bot that missed one and waited for the next would have stopped
+   * working without saying so.
    */
   async listen(onMessage: (message: BotMessage) => void | Promise<void>): Promise<void> {
     await this.session.login();
@@ -185,11 +208,46 @@ export class Bot {
     this.#lastSeen = await this.#newestId();
     if (this.#onDirectMessage) this.#lastDm = await this.dms.newestId();
     this.#timer = setInterval(() => void this.#drain(onMessage), this.pollMs);
+    if (this.#useRealtime) this.#startRealtime(onMessage);
   }
 
   stop(): void {
     if (this.#timer) clearInterval(this.#timer);
     this.#timer = null;
+    if (this.#queued) clearTimeout(this.#queued);
+    this.#queued = null;
+    this.#realtime?.stop();
+    this.#realtime = null;
+  }
+
+  /** Whether the bot is hearing the server rather than asking it. */
+  get listening(): boolean {
+    return this.#realtime?.connected ?? false;
+  }
+
+  #startRealtime(onMessage: (message: BotMessage) => void | Promise<void>): void {
+    const userId = this.session.userId;
+    if (userId === null) return;
+    this.#realtime = new RealtimeListener({
+      url: this.session.url,
+      anonKey: this.session.anonKey,
+      token: this.session.token ?? '',
+      topic: `user:${userId}`,
+      // Every event here means "something you can read has changed", and one
+      // drain answers all of them: the cursors decide what is actually new.
+      onEvent: () => this.#soon(onMessage),
+      onError: (error) => this.#reportError(new BotError(error.message)),
+    });
+    this.#realtime.start();
+  }
+
+  /** Coalesce a burst of announcements into one pass, a tick from now. */
+  #soon(onMessage: (message: BotMessage) => void | Promise<void>): void {
+    if (this.#queued) return;
+    this.#queued = setTimeout(() => {
+      this.#queued = null;
+      void this.#drain(onMessage);
+    }, 50);
   }
 
   /** Answer in the channel, where everybody can see it. */
@@ -227,7 +285,6 @@ export class Bot {
       channel_id: channelId,
       ...this.#envelope(channelId, text),
     });
-    await this.session.ringDoorbell(channelId);
   }
 
   /**
@@ -247,7 +304,6 @@ export class Bot {
       ...envelope,
       blocks: { v: 1, blocks },
     });
-    await this.session.ringDoorbell(channelId);
     return rows.length === 0 ? null : rows[0].id;
   }
 
@@ -308,12 +364,16 @@ export class Bot {
     return joinVoice(this.session, channelId, options);
   }
 
-  /** Redraw a panel in place. Only the bot that posted it may. */
+  /**
+   * Redraw a panel in place. Only the bot that posted it may.
+   *
+   * [channelId] is no longer used for anything and is kept so calls do not
+   * have to change: the database announces the edit itself, to everyone who
+   * may see the channel it is in (migration 017).
+   */
   async editPanel(channelId: string, panelId: number, blocks: PanelBlock[]): Promise<void> {
+    void channelId;
     await this.session.patch(`messages?id=eq.${panelId}`, { blocks: { v: 1, blocks } });
-    await this.session.ringDoorbell(channelId, 'message_changed', {
-      message_id: String(panelId),
-    });
   }
 
   async #drain(onMessage: (message: BotMessage) => void | Promise<void>): Promise<void> {
@@ -372,6 +432,10 @@ export class Bot {
       // how it stayed invisible.
       if (error.status === 401) {
         await this.session.login();
+        // The socket was opened with the token that just expired, and the
+        // server closes a topic whose token runs out. Telling it the new one
+        // is what keeps the bot listening rather than quietly back to polling.
+        this.#realtime?.setToken(this.session.token ?? '');
         return;
       }
 
@@ -417,9 +481,5 @@ export class Bot {
       reply_to: to.id,
       ...(ephemeralFor ? { ephemeral_for: ephemeralFor } : {}),
     });
-    // Without this the reply is stored and nobody with the channel open hears
-    // about it until they reopen — which for an answer to a question somebody
-    // just asked is the same as not answering.
-    await this.session.ringDoorbell(to.channelId);
   }
 }
