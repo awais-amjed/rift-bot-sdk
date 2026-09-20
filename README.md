@@ -351,6 +351,27 @@ it when the row is written, which is also why a bot's answers now appear for
 members who have the channel open even when the bot writes them through the
 REST API.
 
+## Letting people find it
+
+A finished bot can be listed in the central directory, which is where a
+server admin browses from **Manage server → Bots → Browse bots**. Listing is
+in the app, under **List a bot** in that same browser: a name, a description,
+tags, and a link to the source. Ten per account, delistable, withdrawable.
+
+Nothing is verified, and the listing carries no invite — a bot has no address
+for one to point at. Adding your bot is the *admin's* server minting a
+single-use invite marked `is_bot` and handing the string to whoever runs the
+program, which is exactly the `BotSession.join` at the top of this file.
+Central never hears that it happened.
+
+So the only thing on a listing anybody can check is the source link, and the
+directory ranks on likes rather than installs for the same reason: an install
+happens entirely on somebody else's server.
+
+Publish `manifest` from the running bot and the listing can carry a copy, so
+the browser shows your commands and your data-use sentence *before* somebody
+installs — which is the one moment that sentence is still a decision.
+
 ## What this package does not do yet
 
 - **Hearing a call.** The grant exists and the token honours it, but this
@@ -376,6 +397,6 @@ Rift is five repositories, meant to be cloned as siblings.
 |---|---|
 | `rift` | the client: Flutter app, Rust crate, `rift_crypto` |
 | `rift-self-host` | a server's schema, endpoints and console — anyone runs one |
-| `rift-central` | accounts, the public directory, the push relay — we run it |
+| `rift-central` | accounts, the server and bot directories, the push relay — we run it |
 | `rift-bot-sdk` | the TypeScript bot SDK |
 | `rift-website` | joinrift.app, and the self-hosting docs |
