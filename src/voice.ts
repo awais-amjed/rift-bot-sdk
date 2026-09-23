@@ -239,34 +239,51 @@ export async function joinVoice(
   );
 }
 
+/** How long {@link mediaKey} waits for a member to seal one, and how often. */
+const MEDIA_KEY_WAIT_MS = 15_000;
+const MEDIA_KEY_POLL_MS = 500;
+
 /**
  * The key this bot's media is encrypted with in [channelId], and its ring slot.
  *
  * Sealed by a member and read back here — the bot cannot derive it, which is
  * the point: it is a one-way function of a channel key the bot does not have.
- * Absent until some member has opened the channel, and that case is worth its
- * own sentence rather than a generic failure, because it is normal and it
- * clears by itself.
+ *
+ * **Waited for, not merely asked for.** The summon is what *causes* the
+ * sealing: a member's client sees it and seals in response. So the first
+ * `/play` into a channel is a race this end always used to lose — measured at
+ * 0.7 s between the summon landing and the key appearing, with the bot having
+ * asked once in between and given up. That is not an edge case, it is every
+ * bot's first summon into every channel.
+ *
+ * It still gives up, because waiting cannot help when there is nobody there to
+ * seal: a channel no member has opened has no key and will not grow one.
  */
 async function mediaKey(
   session: BotSession,
   channelId: string,
 ): Promise<{ key: Buffer; keyVersion: number }> {
-  const data = await session.callFunction('get_channel_key', {
-    channel_id: channelId,
-  });
-  const sealed = data.my_voice_key as (Wrapped & { key_version: number }) | null;
-  if (!sealed) {
-    throw new BotError(
-      'No media key for this channel yet. A member has to have been in it ' +
-        'before a bot can speak — their client is what seals the key.',
-    );
+  const deadline = Date.now() + MEDIA_KEY_WAIT_MS;
+  for (;;) {
+    const data = await session.callFunction('get_channel_key', {
+      channel_id: channelId,
+    });
+    const sealed = data.my_voice_key as (Wrapped & { key_version: number }) | null;
+    if (sealed) {
+      return {
+        key: unwrapKey(session.chatIdentity, sealed),
+        keyVersion: sealed.key_version,
+      };
+    }
+    if (Date.now() >= deadline) {
+      throw new BotError(
+        'No media key for this channel after waiting. A member has to be ' +
+          'there to seal one — their client is what does it, in answer to the ' +
+          'summon, and nobody answered.',
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, MEDIA_KEY_POLL_MS));
   }
-
-  return {
-    key: unwrapKey(session.chatIdentity, sealed),
-    keyVersion: sealed.key_version,
-  };
 }
 
 /**
