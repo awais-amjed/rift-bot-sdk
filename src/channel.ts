@@ -101,10 +101,19 @@ export class ChannelReader {
     return rows.length === 0 ? null : rows[0].from_key_version;
   }
 
-  /** The newest id here, so a restart does not replay a backlog. */
+  /**
+   * The newest id here, so a restart does not replay a backlog.
+   *
+   * Through `channel_messages` rather than the table, because
+   * `messages?channel_id=eq.…&order=id.desc&limit=1` is a shape the planner
+   * answers by walking the primary key: every channel's messages share one
+   * table and one sequence, so it crosses everything said anywhere on the
+   * server since this channel last spoke. Seconds on a busy server, for one
+   * row. The RPC takes it off `idx_messages_channel` instead.
+   */
   async newestId(): Promise<number> {
     const rows = await this.session.select<{ id: number }>(
-      `messages?select=id&channel_id=eq.${this.channelId}&order=id.desc&limit=1`,
+      `rpc/channel_messages?p_channel=${this.channelId}&p_limit=1&select=id`,
     );
     return rows.length === 0 ? 0 : rows[0].id;
   }
