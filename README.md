@@ -378,12 +378,11 @@ installs — which is the one moment that sentence is still a decision.
   package has no `onAudio`: a granted bot connects and subscribes, and reading
   the frames is `@livekit/rtc-node`'s API directly for now.
 - **Surviving a key rotation mid-call.** Removing somebody from a channel
-  rotates its key, which changes both the bot's derived key and the ring slot it
-  belongs in. Rift's own clients move across without dropping the call; a bot
-  cannot, because `@livekit/rtc-node`'s `FrameCryptor.setKeyIndex` sends a
-  request with a required `track_sid` it never fills in and throws. Until that
-  is fixed upstream, a bot that was speaking when a rotation happened goes
-  inaudible: leave and `joinVoice` again, which fetches the new key.
+  rotates its key, and the bot's key is derived from it. This package sets the
+  key once, when it joins, and does not yet fetch the new one — so a bot that
+  was speaking when a rotation happened goes inaudible. Leave and `joinVoice`
+  again, which fetches the new key. (The slot does not move: a bot always
+  encrypts in slot 0, see WIRE.md §6, so re-keying is a `setSharedKey` away.)
 - **Attachments.** A bot's reply is text or a panel, in a channel or a DM.
 - **Speaking in a private channel it only *reads*.** A grant is read access; a
   seat is what lets a bot post. Give it a role with `channel_role_access` if it
