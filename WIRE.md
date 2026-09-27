@@ -52,11 +52,11 @@ for the central host. `<version>` is `v1`.
 Two things a port gets wrong:
 
 - **`host` is the URL's host only** — no scheme, no port, no path.
-  `http://192.168.1.6:8000` gives `192.168.1.6`.
-- **The chat identity is not scoped to a server.** It is per host and pinned at
-  `v1` while the auth identity carries a rotating version. Scoping it would
-  change the X25519 key on every auth rotation and make old messages
-  unreadable.
+  `https://chat.example.org:8443/rift` gives `chat.example.org`.
+- **The chat identity is not scoped to a server.** It is per host, and pinned at
+  `v1` for good: everything ever sealed to somebody is opened with it, so a new
+  version would make all of it unreadable. The sign-in key's `<version>` is `v1`
+  too, and nothing rotates either.
 
 An Ed25519 or X25519 keypair is built from those 32 bytes as a **seed**, not as
 a private scalar — RFC 8032 for Ed25519, RFC 7748 clamping for X25519. Most
