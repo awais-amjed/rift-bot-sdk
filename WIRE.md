@@ -160,8 +160,9 @@ The bot redraws by writing `blocks` again on the same row and ringing
 
 ## 6. Voice
 
-Calls are end-to-end encrypted with the channel's own key. Three things a second
-implementation has to match, and each of them fails silently if it does not.
+A channel's calls are end-to-end encrypted with the channel's own key. Three
+things a second implementation has to match, and each of them fails silently if
+it does not.
 
 ### The sealed key — `wrap:v1`
 
@@ -249,3 +250,7 @@ The channel keyring itself and the DM key derivation are between clients that
 hold keys; a bot holds one only for voice, and only its own. They are in
 `ARCHITECTURE.md` §4 and are not frozen here yet — the moment a non-Dart client
 needs to *read* a channel rather than be spoken to, they belong here too.
+
+The same goes for a one-to-one call's media key, `HMAC-SHA256(dmKey,
+"dmcall:v1:<callId>")` in slot 1: only the two members derive it, and a bot is
+never on a DM call (`ARCHITECTURE.md` §5).

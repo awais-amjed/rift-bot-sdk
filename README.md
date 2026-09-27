@@ -391,7 +391,7 @@ installs — which is the one moment that sentence is still a decision.
 
 ## Where this sits
 
-Rift is five repositories, meant to be cloned as siblings.
+Rift is seven repositories, meant to be cloned as siblings.
 
 | Repo | Holds |
 |---|---|
@@ -399,4 +399,6 @@ Rift is five repositories, meant to be cloned as siblings.
 | `rift-self-host` | a server's schema, endpoints and console — anyone runs one |
 | `rift-central` | accounts, the server and bot directories, the push relay — we run it |
 | `rift-bot-sdk` | the TypeScript bot SDK |
+| `rift-admin` | the directory moderation dashboard — its own site and accounts |
+| `rift-models` | the on-device image classifier and the tooling that builds it |
 | `rift-website` | joinrift.app, and the self-hosting docs |
