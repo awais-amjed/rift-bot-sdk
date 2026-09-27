@@ -12,7 +12,7 @@ import {
  *
  * **A bot publishes; it does not hear.** Two things hold that, and only the
  * second is arithmetic. The token is minted with `canSubscribe: false` unless
- * an admin granted listening (migration 031). And the call is end-to-end
+ * an admin granted listening. And the call is end-to-end
  * encrypted, so what a bot can decrypt is decided by which key it was given:
  *
  *     botKey = HMAC-SHA256(channelKey, "voicebot:v1:<botId>")

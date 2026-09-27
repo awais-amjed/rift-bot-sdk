@@ -3,7 +3,7 @@
  *
  * A bot used to ask the server for new messages every two seconds — its own,
  * its DMs, and one query per channel it watched. The database announces all of
- * it now (self-hosted migrations 017 and 018), addressed to the bot's own
+ * it now, addressed to the bot's own
  * topic, `user:<bot id>`, which nobody else may join.
  *
  * Realtime speaks Phoenix's protocol over a WebSocket: join a topic, hold it

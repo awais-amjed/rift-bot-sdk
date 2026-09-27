@@ -7,7 +7,7 @@ import { createDecipheriv, createHmac, createPrivateKey, createPublicKey, diffie
  * never held a key, so it never opened anything. End-to-end encrypted calls
  * changed that — a bot has to encrypt its own media to be heard, and the key it
  * encrypts with is derived from the channel key and sealed to it by a member
- * (BOTS.md §6b, migration 032). It still never holds the channel key.
+ * (BOTS.md §6b). It still never holds the channel key.
  *
  * The format is `wrap:v1` from ARCHITECTURE.md §4, and it is a contract with
  * the Dart implementation rather than a choice this file makes:

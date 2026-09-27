@@ -189,8 +189,8 @@ export class Bot {
    * Starts from *now*: a bot restarting does not replay a backlog of commands
    * people gave up on minutes ago and act on all of them at once.
    *
-   * The database announces what this bot may hear on its own topic (migrations
-   * 017 and 018) and this listens there: a message addressed to it, a button
+   * The database announces what this bot may hear on its own topic,
+   * and this listens there: a message addressed to it, a button
    * press, a DM, and anything written in a channel it has been granted. What
    * arrives is ids, so every read still goes through the same queries and the
    * same policies — a broadcast cannot widen what a bot sees.
@@ -369,7 +369,7 @@ export class Bot {
    *
    * [channelId] is no longer used for anything and is kept so calls do not
    * have to change: the database announces the edit itself, to everyone who
-   * may see the channel it is in (migration 017).
+   * may see the channel it is in.
    */
   async editPanel(channelId: string, panelId: number, blocks: PanelBlock[]): Promise<void> {
     void channelId;
