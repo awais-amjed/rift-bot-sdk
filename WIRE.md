@@ -44,7 +44,12 @@ vaultKey     = HMAC-SHA256(seed, "vault:v1")
 serverSeed   = HMAC-SHA256(seed, "<scope>:<version>")     → Ed25519 seed
 stableId     = HMAC-SHA256(seed, "<scope>:identity")      → base64, as-is
 chatSeed     = HMAC-SHA256(seed, "<host>:chat:<version>") → X25519 seed
+cacheKey     = HMAC-SHA256(seed, "local-cache/messages:v1")
 ```
+
+`cacheKey` seals the conversations a device keeps a copy of. Nothing else ever
+reads it, so a port need not implement it. It is listed so that a new context
+string is not chosen to collide with it.
 
 `<scope>` is `"<host>:<serverId>"` for a self-hosted server and bare `"<host>"`
 for the central host. `<version>` is `v1`.
