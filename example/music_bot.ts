@@ -136,9 +136,19 @@ async function play(message: BotMessage, source: string): Promise<void> {
   // fresh key fetch and a participant that flickers in and out of the room for
   // everybody watching.
   let voice = connections.get(voiceChannel);
-  if (!voice) {
-    voice = await bot.joinVoice(voiceChannel);
-    connections.set(voiceChannel, voice);
+  if (!voice?.connected) {
+    const joined = await bot.joinVoice(voiceChannel);
+    connections.set(voiceChannel, joined);
+    // The room can end without this bot hearing why: a `/disconnect` in a
+    // private channel is acted on by the caller's client, which drops the
+    // summon — and with it the bot — before the bot could look the channel up
+    // by it. So the connection says so, and the track and the panel go with it.
+    void joined.closed.then(async () => {
+      if (connections.get(voiceChannel) !== joined) return;
+      connections.delete(voiceChannel);
+      await stopPlaying(voiceChannel);
+    });
+    voice = joined;
   }
   const ffmpeg = decode(source);
 

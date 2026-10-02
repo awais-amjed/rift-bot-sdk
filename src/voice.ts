@@ -61,6 +61,8 @@ interface RtcModule {
 interface RtcRoom {
   connect(url: string, token: string, options?: unknown): Promise<void>;
   disconnect(): Promise<void>;
+  /** rtc-node's `RoomEvent.Disconnected`, once — whoever ended the room. */
+  once(event: 'disconnected', listener: () => void): unknown;
   localParticipant?: { publishTrack(track: unknown, options: unknown): Promise<unknown> };
 }
 
@@ -93,10 +95,26 @@ export class VoiceConnection {
    */
   readonly canHear: boolean;
 
+  /**
+   * Settles once the bot is out of the room, for any reason: {@link leave}, or
+   * the server taking it out — a member's client dropping the summon on a
+   * `dismiss: true` command, the bot's role losing the channel, the room
+   * closing.
+   *
+   * The second kind is the one a bot cannot see coming. The command that
+   * caused it may never reach the bot at all (a dismissal in a private channel
+   * is acted on by the client first, and the summon it would look the channel
+   * up by is already gone), so the connection is the only thing that knows. A
+   * bot holding connections in a map drops this one here and stops whatever
+   * fed it; a closed connection cannot play again — join anew.
+   */
+  readonly closed: Promise<void>;
+
   readonly #rtc: RtcModule;
   readonly #room: RtcRoom;
   #source: RtcAudioSource | null = null;
   #playing = false;
+  #connected = true;
 
   /**
    * Which slot in LiveKit's key ring this bot's key occupies.
@@ -120,6 +138,20 @@ export class VoiceConnection {
     this.#rtc = rtc;
     this.#room = room;
     this.keyIndex = keyIndex;
+    this.closed = new Promise((resolve) => {
+      room.once('disconnected', () => {
+        this.#connected = false;
+        // Ends a running {@link play} at its next frame, rather than leaving
+        // it to fail on a source the room has already torn down.
+        this.#playing = false;
+        resolve();
+      });
+    });
+  }
+
+  /** Whether the bot is still in the room. See {@link closed}. */
+  get connected(): boolean {
+    return this.#connected;
   }
 
   /**
@@ -134,6 +166,7 @@ export class VoiceConnection {
    * chunks lives.
    */
   async play(pcm: AsyncIterable<Uint8Array>): Promise<void> {
+    if (!this.#connected) throw new BotError('this connection has left its room');
     if (this.#playing) throw new BotError('already playing on this connection');
     this.#playing = true;
 

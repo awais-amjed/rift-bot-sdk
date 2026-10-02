@@ -6,7 +6,7 @@ import {
   SAMPLE_RATE,
   audioFrames,
 } from '../src/audio_frames.ts';
-import { grantAllowsSubscribe } from '../src/voice.ts';
+import { VoiceConnection, grantAllowsSubscribe } from '../src/voice.ts';
 
 /// What a bot may hear, and how what it says gets cut up.
 ///
@@ -146,4 +146,47 @@ test('a token that cannot be read means no', () => {
   // more, and "cannot hear" is the answer that sends somebody to the admin
   // rather than into their own audio code.
   assert.equal(grantAllowsSubscribe('not a jwt'), false);
+});
+
+/** A room that can be ended from outside, the way the server ends one. */
+class FakeRoom {
+  #onDisconnected: (() => void) | null = null;
+  async connect(): Promise<void> {}
+  async disconnect(): Promise<void> {
+    this.end();
+  }
+  once(_event: 'disconnected', listener: () => void): void {
+    this.#onDisconnected = listener;
+  }
+  end(): void {
+    const listener = this.#onDisconnected;
+    this.#onDisconnected = null;
+    listener?.();
+  }
+}
+
+function connectionIn(room: FakeRoom): VoiceConnection {
+  // Nothing here reaches the media module: `closed` is about the room alone.
+  return new VoiceConnection('channel', false, {} as never, room, 0);
+}
+
+test('a room the server ends settles `closed`, and the connection says so', async () => {
+  // F-23: a `/disconnect` in a private channel never reached the bot, which
+  // kept a dead connection and failed every later `/play` there.
+  const room = new FakeRoom();
+  const voice = connectionIn(room);
+  assert.equal(voice.connected, true);
+
+  room.end();
+  await voice.closed;
+  assert.equal(voice.connected, false);
+  await assert.rejects(voice.play(chunks(FRAME_BYTES)), /left its room/);
+});
+
+test('leaving settles `closed` too', async () => {
+  const room = new FakeRoom();
+  const voice = connectionIn(room);
+  await voice.leave();
+  await voice.closed;
+  assert.equal(voice.connected, false);
 });

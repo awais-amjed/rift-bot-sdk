@@ -260,6 +260,14 @@ await voice.leave();
 `example/music_bot.ts` is the whole thing: `/play <url>` joins the channel you
 are in, decodes with `ffmpeg`, and puts a Stop button on a panel.
 
+**The room can end without the bot being told why.** A member's client acts on a
+`dismiss: true` command by dropping the summon, and the server takes the bot out
+of the room — in a private channel before the bot could even look the channel up.
+`voice.closed` settles whenever the bot is out, by `leave()` or not, and
+`voice.connected` says the same thing now. A closed connection cannot play again:
+drop it, stop what was feeding it, and `joinVoice` afresh next time, as the
+example does.
+
 **Calls are end-to-end encrypted**, and a bot is audible and deaf at the same
 time. Two things hold that, and only the second is arithmetic:
 
