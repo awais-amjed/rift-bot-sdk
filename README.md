@@ -8,8 +8,8 @@ It signs in the same way, sits under the same permissions, and can never read
 more than it has been granted. Channels stay end-to-end encrypted; a bot only
 reads a channel if an admin hands it that channel's key.
 
-> **Status: in development** (0.1.0). Not published to npm yet — clone this
-> repository and import from `src/index.ts`.
+> Not on npm yet (0.1.0): clone this repository and import from
+> `src/index.ts`.
 
 ## Quick start
 
@@ -92,8 +92,8 @@ means.
 
 | Repository | What it is |
 |---|---|
-| `rift` | the app — Flutter client for desktop, mobile and web |
-| `rift-self-host` | a server anyone can run — where a bot lives |
+| [`rift`](https://github.com/awais-amjed/rift) | the app — Flutter client for desktop, mobile and web |
+| [`rift-self-host`](https://github.com/awais-amjed/rift-self-host) | a server anyone can run — where a bot lives |
 | **`rift-bot-sdk`** | this: the TypeScript SDK for building bots |
 
 ## License
