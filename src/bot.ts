@@ -47,6 +47,15 @@ export function args(message: BotMessage): string {
 /** One block of a panel. See `WIRE.md` §5 for the vocabulary. */
 export type PanelBlock = Record<string, unknown>;
 
+export interface PanelOptions {
+  /**
+   * A member's user id: only they see the panel. Check a press on it came from
+   * them all the same — nothing stops another member naming a panel id they
+   * cannot see.
+   */
+  readonly onlyFor?: string;
+}
+
 /**
  * A running bot: poll for what it is addressed, answer it.
  *
@@ -310,8 +319,12 @@ export class Bot {
    *
    * Hold on to it. A queue that posts a new panel per track is the log a panel
    * exists to replace.
+   *
+   * With [options.onlyFor], one member sees it and nobody else: a choice that
+   * is theirs to make, like which of five search results they meant. Private
+   * from the channel the way {@link replyPrivately} is, and no further.
    */
-  async panel(channelId: string, blocks: PanelBlock[]): Promise<number | null> {
+  async panel(channelId: string, blocks: PanelBlock[], options: PanelOptions = {}): Promise<number | null> {
     // Signed over the empty body, not over the blocks: the signature attests
     // *who wrote the row*, and the panel is structure the client validates
     // itself. Signing a JSON encoding would make that encoding part of the
@@ -321,8 +334,19 @@ export class Bot {
       channel_id: channelId,
       ...envelope,
       blocks: { v: 1, blocks },
+      ...(options.onlyFor ? { ephemeral_for: options.onlyFor } : {}),
     });
     return rows.length === 0 ? null : rows[0].id;
+  }
+
+  /**
+   * Take a panel away. Only the bot that posted it may.
+   *
+   * For a panel whose job is done — a choice made, a prompt nobody answered —
+   * where redrawing it to say so would leave a row behind for nothing.
+   */
+  async deletePanel(panelId: number): Promise<void> {
+    await this.session.remove(`messages?id=eq.${panelId}`);
   }
 
   /**

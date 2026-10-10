@@ -249,6 +249,14 @@ export class BotSession {
     await this.#throwIfFailed(res);
   }
 
+  async remove(query: string): Promise<void> {
+    const res = await request(`${this.url}/rest/v1/${query}`, {
+      method: 'DELETE',
+      headers: { ...this.#headers(), Prefer: 'return=minimal' },
+    });
+    await this.#throwIfFailed(res);
+  }
+
   /**
    * Put a file in one of this server's Storage buckets. Refuses to overwrite:
    * a name is used once, so a client holding the old picture is never shown a

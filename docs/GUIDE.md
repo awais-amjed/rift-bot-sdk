@@ -149,6 +149,7 @@ the bot hears nobody.
 | `bot.reply(m, text)` | everyone in the channel | genuinely public output |
 | `bot.replyPrivately(m, text)` | only whoever asked | errors, confirmations |
 | `bot.panel(channelId, blocks)` | everyone, and it can be redrawn | living state |
+| `bot.panel(channelId, blocks, { onlyFor: m.senderId })` | only that member | a choice that is theirs to make |
 
 A private reply is private from the *channel*, not from the server: it is
 stored unencrypted like everything else a bot touches, and enforced by RLS
@@ -167,6 +168,11 @@ const id = await bot.panel(channelId, [
   { type: 'actions', items: [{ label: 'Skip', action: 'skip' }] },
 ]);
 ```
+
+`bot.deletePanel(id)` takes a panel away once its job is done — a choice made,
+or one nobody answered. A panel posted `onlyFor` one member is hidden from the
+rest of the channel, but a press names its panel only by id, so check
+`message.senderId` is the member you showed it to before acting on one.
 
 A press arrives through the same `listen` callback with `isAction(message)`
 true, `message.actionId` the button's own id, and `message.panelId` the panel to
