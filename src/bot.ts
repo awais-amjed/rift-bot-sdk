@@ -214,6 +214,21 @@ export class Bot {
     if (this.#useRealtime) this.#startRealtime(onMessage);
   }
 
+  /**
+   * Sign in again after the session expired, and hand the new token to the
+   * realtime socket.
+   *
+   * The polling loop does this itself when one of its reads comes back 401.
+   * Call it when one of *your* calls does — a panel redraw an hour into a
+   * song — and retry the call. Logging in through `session.login()` alone would
+   * leave the socket on the old token: the server closes a topic whose token
+   * runs out, and the bot drops back to polling without a word.
+   */
+  async renewSession(): Promise<void> {
+    await this.session.login();
+    this.#realtime?.setToken(this.session.token ?? '');
+  }
+
   stop(): void {
     if (this.#timer) clearInterval(this.#timer);
     this.#timer = null;
@@ -479,11 +494,7 @@ export class Bot {
       // is the one a summoned bot hits, and sending it round the login path is
       // how it stayed invisible.
       if (error.status === 401) {
-        await this.session.login();
-        // The socket was opened with the token that just expired, and the
-        // server closes a topic whose token runs out. Telling it the new one
-        // is what keeps the bot listening rather than quietly back to polling.
-        this.#realtime?.setToken(this.session.token ?? '');
+        await this.renewSession();
         return;
       }
 
