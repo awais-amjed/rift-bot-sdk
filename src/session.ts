@@ -194,13 +194,13 @@ export class BotSession {
   }
 
   async select<T = Record<string, unknown>>(query: string): Promise<T[]> {
-    const res = await fetch(`${this.url}/rest/v1/${query}`, { headers: this.#headers() });
+    const res = await request(`${this.url}/rest/v1/${query}`, { headers: this.#headers() });
     await this.#throwIfFailed(res);
     return (await res.json()) as T[];
   }
 
   async insert(table: string, row: Record<string, unknown>): Promise<void> {
-    const res = await fetch(`${this.url}/rest/v1/${table}`, {
+    const res = await request(`${this.url}/rest/v1/${table}`, {
       method: 'POST',
       headers: { ...this.#headers(), Prefer: 'return=minimal' },
       body: JSON.stringify(row),
@@ -213,7 +213,7 @@ export class BotSession {
     table: string,
     row: Record<string, unknown>,
   ): Promise<T[]> {
-    const res = await fetch(`${this.url}/rest/v1/${table}`, {
+    const res = await request(`${this.url}/rest/v1/${table}`, {
       method: 'POST',
       headers: { ...this.#headers(), Prefer: 'return=representation' },
       body: JSON.stringify(row),
@@ -230,7 +230,7 @@ export class BotSession {
    * this bot's JWT is what it is made against.
    */
   async rpc<T = unknown>(name: string, params: Record<string, unknown>): Promise<T> {
-    const res = await fetch(`${this.url}/rest/v1/rpc/${name}`, {
+    const res = await request(`${this.url}/rest/v1/rpc/${name}`, {
       method: 'POST',
       headers: this.#headers(),
       body: JSON.stringify(params),
@@ -241,7 +241,7 @@ export class BotSession {
   }
 
   async patch(query: string, body: Record<string, unknown>): Promise<void> {
-    const res = await fetch(`${this.url}/rest/v1/${query}`, {
+    const res = await request(`${this.url}/rest/v1/${query}`, {
       method: 'PATCH',
       headers: { ...this.#headers(), Prefer: 'return=minimal' },
       body: JSON.stringify(body),
@@ -255,7 +255,7 @@ export class BotSession {
    * different one under it.
    */
   async uploadObject(bucket: string, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
-    const res = await fetch(`${this.url}/storage/v1/object/${bucket}/${path}`, {
+    const res = await request(`${this.url}/storage/v1/object/${bucket}/${path}`, {
       method: 'POST',
       headers: {
         apikey: this.#anonKey,
@@ -270,7 +270,7 @@ export class BotSession {
 
   /** Delete a file this bot uploaded. Storage lets an uploader remove its own. */
   async removeObject(bucket: string, path: string): Promise<void> {
-    const res = await fetch(`${this.url}/storage/v1/object/${bucket}/${path}`, {
+    const res = await request(`${this.url}/storage/v1/object/${bucket}/${path}`, {
       method: 'DELETE',
       headers: { apikey: this.#anonKey, Authorization: `Bearer ${this.#token}` },
     });
@@ -278,7 +278,7 @@ export class BotSession {
   }
 
   async callFunction(name: string, body: unknown): Promise<Record<string, unknown>> {
-    const res = await fetch(`${this.url}/functions/v1/${name}`, {
+    const res = await request(`${this.url}/functions/v1/${name}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -307,6 +307,38 @@ export class BotSession {
   }
 }
 
+/** How long one request may take, start to end, before it is given up on. */
+export const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * `fetch`, with a deadline, and the body already read.
+ *
+ * Without the deadline one request that never answered — the network dropping
+ * mid-request was enough — left the bot deaf for good: the poll skips a tick
+ * while the last one is still running, so it waited on that request forever
+ * and never asked for a command again. Now it fails as a {@link BotError},
+ * which the poll reports and gets over by the next tick.
+ *
+ * The body is read inside the deadline too, since a server can send its
+ * headers and then stall.
+ */
+async function request(url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    const body = await res.arrayBuffer();
+    // A 204 (every `return=minimal` write) may not be given a body, not even
+    // an empty one: the constructor throws.
+    const empty = [204, 205, 304].includes(res.status);
+    return new Response(empty ? null : body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    });
+  } catch (error) {
+    throw new BotError(`${new URL(url).pathname}: ${(error as Error).message}`);
+  }
+}
+
 /** The `sub` claim — this bot's user id, which `users.id` is. */
 function subjectOf(token: string): string {
   const payload = token.split('.')[1];
@@ -325,7 +357,7 @@ async function callUnauthenticated(
   name: string,
   body: unknown,
 ): Promise<Record<string, unknown>> {
-  const res = await fetch(`${url}/functions/v1/${name}`, {
+  const res = await request(`${url}/functions/v1/${name}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
