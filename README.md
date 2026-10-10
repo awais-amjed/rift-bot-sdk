@@ -61,7 +61,7 @@ npm install @livekit/rtc-node
 
 - **Commands** — `/name args`, offered to members as they type
 - **Replies** — public, or visible only to whoever asked
-- **Panels** — a message the bot keeps redrawing, with buttons and menus
+- **Panels** — a message the bot keeps redrawing, with buttons, menus and pictures
 - **DMs** — conversations with members, private from the server too
 - **Reading a channel** — only one an admin has granted it
 - **Voice** — speak into a call; hear one only if an admin allows it

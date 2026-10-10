@@ -1,4 +1,7 @@
+import { createHash, randomBytes } from 'node:crypto';
+
 import { signedPayload, sign } from './crypto.ts';
+import { imageInfo } from './image.ts';
 import { BotError, type BotSession } from './session.ts';
 import { joinVoice, type VoiceConnection, type VoiceOptions } from './voice.ts';
 import { DirectMessages, type DirectMessage } from './dm.ts';
@@ -305,6 +308,51 @@ export class Bot {
       blocks: { v: 1, blocks },
     });
     return rows.length === 0 ? null : rows[0].id;
+  }
+
+  /**
+   * Store a picture for a panel in [channelId], and get the block that shows it.
+   *
+   * The picture goes to this server's own attachment bucket, under the channel
+   * — never a URL, because a URL would make every member's client fetch from
+   * wherever it pointed (BOTS.md §5). Only members who can see the channel can
+   * read it, and the client draws it only in a panel in that same channel.
+   *
+   * **It is stored unencrypted**, like the panel itself: the server can see it.
+   * PNG, JPEG, WebP or GIF; its size is read from the header so the panel holds
+   * room for it. Needs `ATTACH_FILES`, which `@everyone` has unless a server
+   * took it away, and counts against the server's storage like any upload.
+   *
+   * Every call stores a new file. When a panel moves on to another picture,
+   * {@link deleteImage} the old one, or a music bot leaves one cover per track
+   * behind until the channel's own history is swept.
+   */
+  async uploadImage(
+    channelId: string,
+    bytes: Uint8Array,
+    options: { alt?: string } = {},
+  ): Promise<PanelBlock & { path: string }> {
+    const info = imageInfo(bytes);
+    if (!info) throw new BotError('uploadImage: not a PNG, JPEG, WebP or GIF');
+    const path = `${channelId}/${randomBytes(16).toString('hex')}.${info.extension}`;
+    await this.session.uploadObject(this.#bucket, path, bytes, info.contentType);
+    return {
+      type: 'image',
+      path,
+      sha256: createHash('sha256').update(bytes).digest('base64'),
+      ...(info.width ? { width: info.width, height: info.height } : {}),
+      ...(options.alt ? { text: options.alt } : {}),
+    };
+  }
+
+  /** Delete a picture {@link uploadImage} stored, by the block's `path`. */
+  async deleteImage(path: string): Promise<void> {
+    await this.session.removeObject(this.#bucket, path);
+  }
+
+  /** The server's attachment bucket: one per server, `chat-<server id>`. */
+  get #bucket(): string {
+    return `chat-${this.session.serverId}`;
   }
 
   /**

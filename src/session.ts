@@ -249,6 +249,34 @@ export class BotSession {
     await this.#throwIfFailed(res);
   }
 
+  /**
+   * Put a file in one of this server's Storage buckets. Refuses to overwrite:
+   * a name is used once, so a client holding the old picture is never shown a
+   * different one under it.
+   */
+  async uploadObject(bucket: string, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
+    const res = await fetch(`${this.url}/storage/v1/object/${bucket}/${path}`, {
+      method: 'POST',
+      headers: {
+        apikey: this.#anonKey,
+        Authorization: `Bearer ${this.#token}`,
+        'Content-Type': contentType,
+        'x-upsert': 'false',
+      },
+      body: bytes,
+    });
+    await this.#throwIfFailed(res);
+  }
+
+  /** Delete a file this bot uploaded. Storage lets an uploader remove its own. */
+  async removeObject(bucket: string, path: string): Promise<void> {
+    const res = await fetch(`${this.url}/storage/v1/object/${bucket}/${path}`, {
+      method: 'DELETE',
+      headers: { apikey: this.#anonKey, Authorization: `Bearer ${this.#token}` },
+    });
+    await this.#throwIfFailed(res);
+  }
+
   async callFunction(name: string, body: unknown): Promise<Record<string, unknown>> {
     const res = await fetch(`${this.url}/functions/v1/${name}`, {
       method: 'POST',

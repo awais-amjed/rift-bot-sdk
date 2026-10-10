@@ -142,6 +142,7 @@ only a structure.
 | `divider` | — | a rule |
 | `actions` | `items: [{label, action, style?}]` | a row of buttons |
 | `select` | `action`, `text?`, `options: [{label, value?}]` | a menu |
+| `image` | `path`, `sha256`, `width?`, `height?`, `text?` | a picture |
 
 `style` is `primary`, `danger`, or absent. It is a **weight, not a colour** —
 a bot cannot paint a button into looking like part of Rift's own chrome.
@@ -159,7 +160,16 @@ The bot redraws by writing `blocks` again on the same row and ringing
 `message_changed` with its id. Ringing `new_message` makes clients fetch what is
 *newer* than they have, and a redraw is not newer than anything.
 
-`image` is deliberately absent from v1 — see BOTS.md §5.
+An `image` is never a URL. `path` names an object in the server's own
+attachment bucket (`chat-<server id>`), uploaded unencrypted by the bot:
+`<channel id>/<name>.<png|jpg|jpeg|webp|gif>`, where the channel is the one the
+panel is in and the name is letters, digits, `_` and `-`. A block naming any
+other channel, a folder below it, or any other kind of file is dropped.
+`sha256` is the base64 SHA-256 of the bytes (44 characters); a download that
+does not match is not drawn. `width` and `height` are the picture's size in
+pixels, 1 to 16384, kept so the panel holds room for it before it arrives;
+anything else is ignored. `text` describes it for a screen reader. Why it is
+built this way is in BOTS.md §5.
 
 ---
 
@@ -251,8 +261,9 @@ this section exists to prevent, arrived at by following this section.
 
 ## Out of scope
 
-The channel keyring itself and the DM key derivation are between clients that
-hold keys; a bot holds one only for voice, and only its own. They are in
+The channel keyring itself, the links that chain its versions
+(`ARCHITECTURE.md` §4, *The key chain*) and the DM key derivation are between
+clients that hold keys; a bot holds one only for voice, and only its own. They are in
 `ARCHITECTURE.md` §4 and are not frozen here yet — the moment a non-Dart client
 needs to *read* a channel rather than be spoken to, they belong here too.
 

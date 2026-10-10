@@ -173,6 +173,25 @@ true, `message.actionId` the button's own id, and `message.panelId` the panel to
 redraw. It is **not a message**: nobody's channel shows it, no phone rings for
 it, and it does not count as unread.
 
+A panel can show a picture, but never from a URL: upload it, and put the block
+you get back where it goes.
+
+```ts
+const cover = await bot.uploadImage(channelId, readFileSync('cover.jpg'), {
+  alt: 'Album cover',
+});
+await bot.editPanel(channelId, id, [{ type: 'heading', text: 'Now playing' }, cover]);
+// Moving on to the next track: show the new cover, then delete the old file.
+await bot.deleteImage(cover.path);
+```
+
+The picture goes to the server's own storage, under the channel, **unencrypted**
+— the server can see it, as it can see the panel. Only members who can see the
+channel can fetch it, and Rift draws it only in a panel in that channel. PNG,
+JPEG, WebP or GIF; the size is read from the file so the panel keeps its height
+while it loads. It needs `ATTACH_FILES` and counts against the server's storage,
+so delete a picture once no panel shows it.
+
 The vocabulary is fixed and versioned — see `../WIRE.md` §5. A block type this
 client's Rift does not know is **not drawn**, which is the safety property
 rather than a limitation: a bot never controls a pixel, only a structure.
@@ -368,7 +387,9 @@ installs — which is the one moment that sentence is still a decision.
   was speaking when a rotation happened goes inaudible. Leave and `joinVoice`
   again, which fetches the new key. (The slot does not move: a bot always
   encrypts in slot 0, see WIRE.md §6, so re-keying is a `setSharedKey` away.)
-- **Attachments.** A bot's reply is text or a panel, in a channel or a DM.
+- **Attachments.** A bot's reply is text or a panel, in a channel or a DM. A
+  panel can show a picture (`uploadImage`), but a bot cannot attach a file to a
+  message.
 - **Speaking in a private channel it only *reads*.** A grant is read access; a
   seat is what lets a bot post. Give it a role with `channel_role_access` if it
   needs to answer in there.
