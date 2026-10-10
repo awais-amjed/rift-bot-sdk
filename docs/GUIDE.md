@@ -202,6 +202,29 @@ The vocabulary is fixed and versioned — see `../WIRE.md` §5. A block type thi
 client's Rift does not know is **not drawn**, which is the safety property
 rather than a limitation: a bot never controls a pixel, only a structure.
 
+## Suggestions while a command is typed
+
+Mark a command `suggest: true` in the manifest, and Rift asks the bot what to
+list once somebody has typed the verb and a space — `/play thats so tr` shows
+songs above the composer. Picking a row sends `/<command> <value>`, which
+arrives through `listen` like anything typed.
+
+```ts
+bot.onSuggest(async (request) => {
+  if (request.command !== 'play') return [];
+  const songs = await search(request.text);
+  return songs.map((s) => ({ label: `${s.title} — ${s.artist}`, value: s.link }));
+});
+```
+
+Up to ten rows; a label up to 100 characters, a value up to 500 with no line
+break. **Look things up and do nothing else**: `request.from` is the asking
+client's claim, not something the server checked (`../WIRE.md` §7), so the
+place to act is the command, which is signed. The bot answers only the newest
+question from each person, so a slow search does not land a stale list after
+the right one. Suggestions travel over Realtime, so they need `listen` without
+`{ realtime: false }`.
+
 ## Checked against the other implementation
 
 ```bash

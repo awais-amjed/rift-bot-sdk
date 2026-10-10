@@ -7,6 +7,14 @@ import { joinVoice, type VoiceConnection, type VoiceOptions } from './voice.ts';
 import { DirectMessages, type DirectMessage } from './dm.ts';
 import { RealtimeListener } from './realtime.ts';
 import { ChannelReader, type ChannelMessage } from './channel.ts';
+import {
+  parseSuggestRequest,
+  suggestionsPayload,
+  SUGGEST_EVENT,
+  SUGGESTIONS_EVENT,
+  type Suggestion,
+  type SuggestRequest,
+} from './suggest.ts';
 
 /** One command, or one press, as the bot receives it. */
 export interface BotMessage {
@@ -101,6 +109,14 @@ export class Bot {
 
   #onError: ((error: BotError) => void) | null = null;
 
+  #onSuggest: ((request: SuggestRequest) => Suggestion[] | Promise<Suggestion[]>) | null = null;
+
+  /// Per asker: whether a suggestion is being worked out, and the newest
+  /// request that came in meanwhile. Someone typing fast sends one per pause;
+  /// only the last is worth answering, and answering each in turn would land
+  /// a stale menu after the right one.
+  readonly #suggesting = new Map<string, SuggestRequest | null>();
+
   /// Channels this bot was granted and is reading, by id, each with its own
   /// cursor. A cursor per channel rather than one shared: they advance
   /// independently, and one channel stalled on an unsealed rotation must not
@@ -174,6 +190,56 @@ export class Bot {
       handler,
     });
     return grantedFrom;
+  }
+
+  /**
+   * Offer suggestions while somebody types one of this bot's commands —
+   * the rows Rift shows above the composer for `/play thats so tr`.
+   *
+   * Only for a command the manifest marks `suggest: true`; Rift asks for no
+   * other. Return up to ten `{label, value}`: the label is the row, and picking
+   * it sends `/<command> <value>`, which then arrives through {@link listen}
+   * like anything typed.
+   *
+   * **Look things up; do nothing.** Who asked is the asking client's claim
+   * (WIRE.md §7), so a handler that queued a song or changed a setting would
+   * do it for anybody who said they were somebody. Needs Realtime, so not with
+   * `{ realtime: false }`. Call before {@link listen}.
+   */
+  onSuggest(handler: (request: SuggestRequest) => Suggestion[] | Promise<Suggestion[]>): void {
+    this.#onSuggest = handler;
+  }
+
+  #suggest(payload: Record<string, unknown>): void {
+    const request = parseSuggestRequest(payload);
+    if (!request || !this.#onSuggest) return;
+    if (this.#suggesting.has(request.from)) {
+      this.#suggesting.set(request.from, request);
+      return;
+    }
+    this.#suggesting.set(request.from, null);
+    void this.#answer(request);
+  }
+
+  async #answer(request: SuggestRequest): Promise<void> {
+    try {
+      const items = await this.#onSuggest!(request);
+      await this.session.broadcast(
+        `user:${request.from}`,
+        SUGGESTIONS_EVENT,
+        suggestionsPayload(request, this.session.userId ?? '', items),
+      );
+    } catch (error) {
+      this.#reportError(new BotError(`suggestions for /${request.command}: ${(error as Error).message}`));
+    } finally {
+      const next = this.#suggesting.get(request.from);
+      if (next) {
+        this.#suggesting.set(request.from, null);
+        void this.#answer(next);
+      } else {
+        this.#suggesting.delete(request.from);
+      }
+    }
   }
 
   /**
@@ -262,7 +328,10 @@ export class Bot {
       topic: `user:${userId}`,
       // Every event here means "something you can read has changed", and one
       // drain answers all of them: the cursors decide what is actually new.
-      onEvent: () => this.#soon(onMessage),
+      // ...apart from a request for suggestions, which carries what it asks
+      // and reads nothing.
+      onEvent: (event) =>
+        event.event === SUGGEST_EVENT ? this.#suggest(event.payload) : this.#soon(onMessage),
       onError: (error) => this.#reportError(new BotError(error.message)),
     });
     this.#realtime.start();

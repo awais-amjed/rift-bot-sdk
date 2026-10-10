@@ -1,5 +1,12 @@
 export { BotSession, BotError } from './session.ts';
 export { parseInvite, type Invite } from './invite.ts';
+export {
+  SUGGEST_EVENT,
+  SUGGESTIONS_EVENT,
+  MAX_SUGGESTIONS,
+  type Suggestion,
+  type SuggestRequest,
+} from './suggest.ts';
 export { Bot, isAction, command, args, type BotMessage, type PanelBlock, type PanelOptions } from './bot.ts';
 export { imageInfo, type ImageInfo } from './image.ts';
 export {

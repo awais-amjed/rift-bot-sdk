@@ -249,6 +249,19 @@ export class BotSession {
     await this.#throwIfFailed(res);
   }
 
+  /**
+   * Send one Realtime broadcast without joining its topic — somebody else's
+   * `user:` topic, which the rules let a member send to but never hear.
+   */
+  async broadcast(topic: string, event: string, payload: Record<string, unknown>): Promise<void> {
+    const res = await request(`${this.url}/realtime/v1/api/broadcast`, {
+      method: 'POST',
+      headers: { ...this.#headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ topic, event, payload, private: true }] }),
+    });
+    await this.#throwIfFailed(res);
+  }
+
   async remove(query: string): Promise<void> {
     const res = await request(`${this.url}/rest/v1/${query}`, {
       method: 'DELETE',
