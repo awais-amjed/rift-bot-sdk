@@ -164,7 +164,7 @@ async function play(message: BotMessage, source: string): Promise<void> {
   // handler has to return so the next command is answered while this one is
   // still going.
   void voice
-    .play(ffmpeg.stdout)
+    .play(ffmpeg.stdout, { quality: 'music' })
     .catch((error) => console.error('playback failed:', error))
     .finally(() => {
       // Only tidy up if this is still the track that is playing — a `/play`

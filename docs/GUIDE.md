@@ -279,6 +279,18 @@ await voice.leave();
 `example/music_bot.ts` is the whole thing: `/play <url>` joins the channel you
 are in, decodes with `ffmpeg`, and puts a Stop button on a panel.
 
+**Playing music, say so:** `voice.play(pcm, { quality: 'music' })`. The default
+is LiveKit's, made for a voice — about 32 kbps and DTX, which sends next to
+nothing while it is quiet — and a song played through it came out dull and
+smeared. `music` is 128 kbps with DTX off. It is still sent mono, and Rift's
+desktop clients play everything mono and nothing much above 16 kHz (see the
+app's ARCHITECTURE.md, *How a call is played out on the desktop*), so that is
+the ceiling a listener hears whatever is sent.
+
+`voice.stats()` hands back WebRTC's own figures for the connection — what is
+actually going out, at what bitrate, with which codec settings. Look there
+before guessing at settings when something sounds wrong.
+
 **The room can end without the bot being told why.** A member's client acts on a
 `dismiss: true` command by dropping the summon, and the server takes the bot out
 of the room — in a private channel before the bot could even look the channel up.

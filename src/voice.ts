@@ -54,7 +54,8 @@ interface RtcModule {
     channels: number,
     samplesPerChannel: number,
   ) => unknown;
-  TrackPublishOptions: new () => { source: number };
+  /** A protobuf message: the constructor takes its fields, nested ones as plain objects. */
+  TrackPublishOptions: new (fields?: Record<string, unknown>) => { source: number };
   TrackSource: { SOURCE_MICROPHONE: number };
 }
 
@@ -64,6 +65,7 @@ interface RtcRoom {
   /** rtc-node's `RoomEvent.Disconnected`, once — whoever ended the room. */
   once(event: 'disconnected', listener: () => void): unknown;
   localParticipant?: { publishTrack(track: unknown, options: unknown): Promise<unknown> };
+  getRtcStats(): Promise<unknown>;
 }
 
 interface RtcAudioSource {
@@ -81,6 +83,26 @@ export interface VoiceOptions {
    */
   deviceId?: string;
 }
+
+/** How {@link VoiceConnection.play} publishes. */
+export interface PlayOptions {
+  /**
+   * `voice` (the default) leaves LiveKit's settings alone, which are made for
+   * somebody talking: Opus at WebRTC's default of about 32 kbps, and DTX, which
+   * sends next to nothing while it is quiet.
+   *
+   * `music` is 128 kbps stereo with DTX off. At the defaults a song came
+   * through dull and smeared — the high end gone and every quiet passage
+   * coded as near-silence — which is the first thing anybody playing music
+   * into a call hears. RED, which sends each packet twice against loss, is off
+   * too: at this bitrate it would double what every listener downloads, and
+   * Opus has its own loss recovery.
+   */
+  quality?: 'voice' | 'music';
+}
+
+/** {@link PlayOptions} `music`: LiveKit's `MUSIC_HIGH_QUALITY_STEREO` preset. */
+export const MUSIC_BITRATE = 128_000;
 
 export class VoiceConnection {
   readonly channelId: string;
@@ -165,7 +187,7 @@ export class VoiceConnection {
    * The cutting into frames is [audioFrames], which is where the carry between
    * chunks lives.
    */
-  async play(pcm: AsyncIterable<Uint8Array>): Promise<void> {
+  async play(pcm: AsyncIterable<Uint8Array>, options: PlayOptions = {}): Promise<void> {
     if (!this.#connected) throw new BotError('this connection has left its room');
     if (this.#playing) throw new BotError('already playing on this connection');
     this.#playing = true;
@@ -179,9 +201,13 @@ export class VoiceConnection {
     // that lost one track went quiet for good.
     try {
       const track = this.#rtc.LocalAudioTrack.createAudioTrack('audio', source);
-      const options = new this.#rtc.TrackPublishOptions();
-      options.source = this.#rtc.TrackSource.SOURCE_MICROPHONE;
-      await this.#room.localParticipant?.publishTrack(track, options);
+      const publish = new this.#rtc.TrackPublishOptions(
+        options.quality === 'music'
+          ? { audioEncoding: { maxBitrate: BigInt(MUSIC_BITRATE) }, dtx: false, red: false }
+          : {},
+      );
+      publish.source = this.#rtc.TrackSource.SOURCE_MICROPHONE;
+      await this.#room.localParticipant?.publishTrack(track, publish);
 
       for await (const samples of audioFrames(pcm, () => this.#playing)) {
         await source.captureFrame(
@@ -202,6 +228,15 @@ export class VoiceConnection {
 
   get playing(): boolean {
     return this.#playing;
+  }
+
+  /**
+   * WebRTC's own numbers for this connection: what is actually being sent —
+   * bitrate, codec and its parameters, packets lost. The place to look when
+   * the audio sounds wrong, before guessing at settings.
+   */
+  stats(): Promise<unknown> {
+    return this.#room.getRtcStats();
   }
 
   /** Leave the call. */
